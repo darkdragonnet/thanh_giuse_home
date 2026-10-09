@@ -8,12 +8,12 @@
     "packages/*"
   ],
   "scripts": {
-    "dev:mock": "npm run dev --workspace=apps/hanet-mock",
+    "dev:mock": "npm run dev --workspace=@thanh-giuse/hanet-mock",
     "dev:api": "npm run dev --workspace=@thanh-giuse/api",
     "dev:worker": "npm run dev --workspace=@thanh-giuse/worker",
     "build": "npm run build:packages && npm run build:apps",
     "build:packages": "npm run build --workspace=@thanh-giuse/shared-types && npm run build --workspace=@thanh-giuse/shared-infra && npm run build --workspace=@thanh-giuse/hanet-client && npm run build --workspace=@thanh-giuse/error-mapping",
-    "build:apps": "npm run build --workspace=@thanh-giuse/api && npm run build --workspace=@thanh-giuse/worker",
+    "build:apps": "npm run build --workspace=@thanh-giuse/api && npm run build --workspace=@thanh-giuse/worker && npm run build --workspace=@thanh-giuse/hanet-mock",
     "build:mock": "npm run build --workspace=apps/hanet-mock",
     "test": "npm run test --workspaces --if-present",
     "test:mock": "npm run test --workspace=apps/hanet-mock",
