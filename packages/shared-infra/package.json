@@ -1,0 +1,29 @@
+{
+  "name": "@thanh-giuse/shared-infra",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "echo 'no tests yet' && exit 0",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "pg": "^8.12.0",
+    "ioredis": "^5.4.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}
