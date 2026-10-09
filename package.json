@@ -1,0 +1,39 @@
+{
+  "name": "thanh-giuse-face-onboarding",
+  "version": "1.0.0",
+  "description": "Hệ thống Onboarding Đăng ký Khuôn mặt Học sinh tích hợp HANET Cloud",
+  "main": "dist/api/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start:api": "node dist/api/server.js",
+    "start:worker": "node dist/worker/worker.js",
+    "dev:api": "tsx watch src/api/server.ts",
+    "dev:worker": "tsx watch src/worker/worker.ts"
+  },
+  "keywords": [
+    "hanet",
+    "fastify",
+    "bullmq",
+    "facial-recognition",
+    "onboarding"
+  ],
+  "author": "dragonnet",
+  "license": "ISC",
+  "dependencies": {
+    "@fastify/cors": "^9.0.1",
+    "@fastify/multipart": "^8.3.0",
+    "@fastify/rate-limit": "^9.1.0",
+    "bullmq": "^5.8.5",
+    "dotenv": "^16.4.5",
+    "fastify": "^4.28.1",
+    "ioredis": "^5.4.1",
+    "pg": "^8.12.0",
+    "sharp": "^0.33.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "@types/pg": "^8.11.6",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.3"
+  }
+}

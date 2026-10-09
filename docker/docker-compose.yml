@@ -24,12 +24,13 @@ services:
     container_name: thanh_giuse_proxy
     restart: unless-stopped
     ports:
-      - "8090:80"
-#      - "8080:80"
+      - "80:80"
+      - "8080:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ../frontend/dist:/usr/share/nginx/html:ro
+      - shared_images_volume:/app/uploads:ro
     depends_on:
       - app_api
     networks:
@@ -60,7 +61,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-super_secure_postgres_password_change_me}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -85,7 +86,7 @@ services:
       redis-server /usr/local/etc/redis/redis.conf
       --requirepass ${REDIS_PASSWORD:-super_secure_redis_password_change_me}
     ports:
-      - "127.0.0.1:6379:6379"
+      - "6379:6379"
     volumes:
       - redis_data:/data
       - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
