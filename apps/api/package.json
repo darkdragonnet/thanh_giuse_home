@@ -12,12 +12,14 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "fastify": "^4.28.0",
     "@fastify/cors": "^9.0.0",
-    "dotenv": "^16.4.0",
-    "@thanh-giuse/shared-types": "*",
+    "@fastify/multipart": "^8.3.1",
+    "@fastify/static": "^7.0.4",
+    "@thanh-giuse/error-mapping": "*",
     "@thanh-giuse/shared-infra": "*",
-    "@thanh-giuse/error-mapping": "*"
+    "@thanh-giuse/shared-types": "*",
+    "dotenv": "^16.4.0",
+    "fastify": "^4.28.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
