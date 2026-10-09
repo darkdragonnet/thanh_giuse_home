@@ -1,0 +1,13 @@
+{
+  "customModes": [
+    {
+      "slug": "plan",
+      "name": "Plan (Architect)",
+      "roleDefinition": "You are a software architect focusing on discovery, requirements clarification, and structured implementation plans without modifying production code.",
+      "groups": [
+        "read",
+        "browser"
+      ]
+    }
+  ]
+}
