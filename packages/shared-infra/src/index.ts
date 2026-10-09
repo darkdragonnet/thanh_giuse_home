@@ -11,3 +11,8 @@ export {
 } from './redis.js';
 
 export type { DbConfig, RedisConfig } from './types.js';
+
+export * from './repositories/studentRepository.js';
+export * from './repositories/classRepository.js';
+export * from './repositories/settingsRepository.js';
+export * from './repositories/logRepository.js';
