@@ -14,7 +14,7 @@
   "files": ["dist"],
   "scripts": {
     "build": "tsc",
-    "test": "echo 'no tests yet' && exit 0",
+    "test": "node dist/index.test.js",
     "clean": "rm -rf dist"
   },
   "dependencies": {
