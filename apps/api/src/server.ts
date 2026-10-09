@@ -1,28 +1,36 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import dotenv from 'dotenv';
-import { checkDbConnection } from '../shared/db/index.js';
-import { checkRedisConnection } from '../shared/redis/index.js';
-
-dotenv.config();
+import {
+  createDbPool,
+  closeDbPool,
+  checkDbConnection,
+  createRedisClient,
+  closeRedisClient,
+  checkRedisConnection,
+} from '@thanh-giuse/shared-infra';
+import { apiEnv } from './config.js';
 
 const fastify = Fastify({
   logger: {
-    level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
+    level: apiEnv.nodeEnv === 'production' ? 'info' : 'debug',
   },
   disableRequestLogging: false,
 });
+
+// ═══ Khởi tạo hạ tầng qua factory ═══
+const dbPool = createDbPool(apiEnv.db);
+const redisClient = createRedisClient(apiEnv.redis);
 
 await fastify.register(cors, {
   origin: true,
 });
 
-// Endpoint kiểm tra sức khỏe hệ thống (Health Check)
+// ═══ Health Check ═══
 fastify.get('/api/health', async (request, reply) => {
-  const dbOk = await checkDbConnection();
-  const redisOk = await checkRedisConnection();
-
+  const dbOk = await checkDbConnection(dbPool);
+  const redisOk = await checkRedisConnection(redisClient);
   const isHealthy = dbOk && redisOk;
+
   return reply.status(isHealthy ? 200 : 503).send({
     success: isHealthy,
     status: isHealthy ? 'UP' : 'DEGRADED',
@@ -35,16 +43,33 @@ fastify.get('/api/health', async (request, reply) => {
   });
 });
 
+// ═══ Bootstrap ═══
 const start = async () => {
   try {
-    const port = parseInt(process.env.PORT || '3000', 10);
-    const host = '0.0.0.0';
-    await fastify.listen({ port, host });
-    fastify.log.info(`[FASTIFY SERVER] API đang lắng nghe tại http://${host}:${port}`);
+    await fastify.listen({ port: apiEnv.port, host: apiEnv.host });
+    fastify.log.info(`[API] listening on http://${apiEnv.host}:${apiEnv.port}`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
   }
 };
+
+// ═══ Graceful Shutdown ═══
+const shutdown = async (signal: string) => {
+  fastify.log.info(`[API] Received ${signal}, shutting down gracefully...`);
+  try {
+    await fastify.close();
+    await closeDbPool(dbPool);
+    await closeRedisClient(redisClient);
+    fastify.log.info('[API] Shutdown complete');
+    process.exit(0);
+  } catch (err) {
+    fastify.log.error(err);
+    process.exit(1);
+  }
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 start();
