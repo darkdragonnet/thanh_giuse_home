@@ -9,14 +9,16 @@
   ],
   "scripts": {
     "dev:mock": "npm run dev --workspace=apps/hanet-mock",
-    "dev:api": "npm run dev --workspace=apps/api",
-    "dev:worker": "npm run dev --workspace=apps/worker",
-    "build": "npm run build --workspaces --if-present",
+    "dev:api": "npm run dev --workspace=@thanh-giuse/api",
+    "dev:worker": "npm run dev --workspace=@thanh-giuse/worker",
+    "build": "npm run build:packages && npm run build:apps",
+    "build:packages": "npm run build --workspace=@thanh-giuse/shared-types && npm run build --workspace=@thanh-giuse/shared-infra && npm run build --workspace=@thanh-giuse/hanet-client && npm run build --workspace=@thanh-giuse/error-mapping",
+    "build:apps": "npm run build --workspace=@thanh-giuse/api && npm run build --workspace=@thanh-giuse/worker",
     "build:mock": "npm run build --workspace=apps/hanet-mock",
     "test": "npm run test --workspaces --if-present",
     "test:mock": "npm run test --workspace=apps/hanet-mock",
     "verify:mock": "cd apps/hanet-mock && bash tests/curl/verify.sh",
-    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist packages/*/dist"
+    "clean": "find . -name 'dist' -type d -not -path '*/node_modules/*' -exec rm -rf {} + 2>/dev/null; find . -name '*.tsbuildinfo' -not -path '*/node_modules/*' -delete 2>/dev/null; echo 'clean done'"
   },
   "engines": {
     "node": ">=20.0.0",

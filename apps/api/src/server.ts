@@ -26,7 +26,7 @@ await fastify.register(cors, {
 });
 
 // ═══ Health Check ═══
-fastify.get('/api/health', async (request, reply) => {
+fastify.get('/api/health', async (_request, reply) => {
   const dbOk = await checkDbConnection(dbPool);
   const redisOk = await checkRedisConnection(redisClient);
   const isHealthy = dbOk && redisOk;

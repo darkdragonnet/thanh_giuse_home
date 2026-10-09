@@ -1,14 +1,14 @@
-import Redis from 'ioredis';
+import { Redis } from 'ioredis';
 import type { RedisConfig } from './types.js';
 
 export function createRedisClient(config: RedisConfig): Redis {
   const client = new Redis(config.url, {
     maxRetriesPerRequest: config.maxRetriesPerRequest ?? null,
     enableReadyCheck: config.enableReadyCheck ?? false,
-    retryStrategy: config.retryStrategy ?? ((times) => Math.min(times * 200, 2000)),
+    retryStrategy: config.retryStrategy ?? ((times: number) => Math.min(times * 200, 2000)),
   });
 
-  client.on('error', (err) => {
+  client.on('error', (err: Error) => {
     console.error('[REDIS ERROR]', err);
   });
 
