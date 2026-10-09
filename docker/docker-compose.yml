@@ -167,3 +167,29 @@ services:
           memory: 768M
         reservations:
           memory: 256M
+
+  # ----------------------------------------------------------------------------
+  # 6. HANET MOCK SERVER (RAM Limit: 128MB, Test & Dev Harness)
+  # ----------------------------------------------------------------------------
+  app_mock:
+    build:
+      context: ..
+      dockerfile: apps/hanet-mock/Dockerfile
+    container_name: app_mock
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - HOST=0.0.0.0
+    ports:
+      - "4000:4000"
+    networks:
+      - thanh_giuse_net
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          memory: 32M
+

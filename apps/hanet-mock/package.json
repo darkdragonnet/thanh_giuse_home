@@ -9,15 +9,16 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "echo 'no tests yet' && exit 0",
+    "test:curl": "bash tests/curl/verify.sh",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "fastify": "^4.28.0",
     "@fastify/cors": "^9.0.0",
-    "@fastify/formbody": "^8.0.0",
-    "@fastify/multipart": "^8.3.0",
+    "@fastify/formbody": "^7.4.0",
+    "@fastify/multipart": "^8.3.1",
+    "@thanh-giuse/shared-types": "*",
     "dotenv": "^16.4.0",
-    "@thanh-giuse/shared-types": "*"
+    "fastify": "^4.28.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
