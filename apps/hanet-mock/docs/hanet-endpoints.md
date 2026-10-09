@@ -1,48 +1,70 @@
 # ĐẶC TẢ CHI TIẾT 11 ENDPOINT CỦA HANET CLOUD OPEN API
 
-Tài liệu này mô tả chi tiết định dạng tham số đầu vào và payload phản hồi chuẩn của HANET Cloud:
+### POST /person/registerByUrl
+**Content-Type:** application/x-www-form-urlencoded
+**Auth:** token (form field)
+**Params:**
+| Name | Type | Required | Description |
+|---|---|---|---|
+| token | string | yes | Access token |
+| name | string | yes | Họ tên học sinh |
+| aliasID | string | yes | Mã học sinh duy nhất |
+| placeID | string | yes | ID địa điểm |
+| file_url | string | yes | URL ảnh chân dung |
+| title | string | no | Chức danh |
+| type | number | no | Loại đối tượng (0: member) |
 
----
+**Request Example:**
+```bash
+curl -X POST http://localhost:4000/person/registerByUrl \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  --data "token=mock_token&name=Nguyen+Van+A&aliasID=HS001&placeID=196&file_url=https://example.com/a.jpg"
+```
 
-## 1. POST `/person/registerByUrl`
-* **Mục đích:** Đăng ký thành viên mới bằng đường dẫn ảnh trực tuyến.
-* **Content-Type:** `application/x-www-form-urlencoded`
-* **Tham số Body:**
-  * `token` (string, bắt buộc): Access token của ứng dụng.
-  * `name` (string, bắt buộc): Họ và tên người cần đăng ký.
-  * `aliasID` (string, bắt buộc): Mã định danh duy nhất của học sinh (phía trường học).
-  * `placeID` (string, bắt buộc): ID địa điểm quản lý trên HANET Cloud.
-  * `file_url` (string, bắt buộc): Đường dẫn URL ảnh chân dung (Nginx serve).
-  * `title` (string, tùy chọn): Chức danh (VD: "Học sinh").
-  * `type` (number, tùy chọn): Loại thành viên (0: Nhân viên, 1: Khách).
-* **Response Mẫu (Success):**
+**Response Success (HTTP 200):**
 ```json
 {
   "statusCode": 0,
   "returnCode": 1,
   "returnMessage": "SUCCESS",
   "data": {
-    "file": "https://static.hanet.ai/face/employee/mock/avatar_abc123.jpg",
+    "file": "https://static.hanet.ai/face/employee/mock/avatar_hs001.jpg",
     "aliasID": "HS001",
-    "name": "Nguyễn Hoàng Long",
+    "name": "Nguyen Van A",
     "personID": "mock_HS001_1728470000000",
-    "title": "Học sinh",
-    "type": 0
+    "title": "Hoc sinh"
   }
 }
 ```
 
+**Response Error:**
+- `-1`: INVALID_INPUT_ERROR
+- `-103`: ACCESS_TOKEN_EXPIRE
+- `-503`: SYSTEM_ERROR
+- `-9006`: EMPLOYEE_REGISTER_IMG_INVALID_ERROR
+- `-9007`: EMPLOYEE_REGISTER_IMG_DUPLICATE_ERROR
+- `-9008`: FACE_ID_NOT_ENOUGH_ERROR
+
 ---
 
-## 2. POST `/person/updateByFaceImage`
-* **Mục đích:** Cập nhật ảnh khuôn mặt bằng file ảnh nhị phân (Upload trực tiếp).
-* **Content-Type:** `multipart/form-data`
-* **Tham số Fields:**
-  * `token` (text): Access token.
-  * `aliasID` (text): Mã học sinh.
-  * `placeID` (text): ID địa điểm.
-  * `file` (binary): Dữ liệu file ảnh (JPEG/PNG).
-* **Response Mẫu:**
+### POST /person/updateByFaceImage
+**Content-Type:** multipart/form-data
+**Auth:** token (form field)
+**Params:**
+| Name | Type | Required | Description |
+|---|---|---|---|
+| token | string | yes | Access token |
+| aliasID | string | yes | Mã học sinh |
+| placeID | string | yes | ID địa điểm |
+| file | binary | yes | Dữ liệu file ảnh (≤ 5MB) |
+
+**Request Example:**
+```bash
+curl -X POST http://localhost:4000/person/updateByFaceImage \
+  -F "token=mock_token" -F "aliasID=HS001" -F "placeID=196" -F "file=@/tmp/face.jpg"
+```
+
+**Response Success (HTTP 200):**
 ```json
 {
   "statusCode": 0,
@@ -55,38 +77,130 @@ Tài liệu này mô tả chi tiết định dạng tham số đầu vào và pa
 }
 ```
 
----
-
-## 3. POST `/person/updateByFaceImageByPersonID`
-* **Content-Type:** `multipart/form-data`
-* **Tham số Fields:** `token`, `personID`, `file`
-* **Response Mẫu:** Giống endpoint 2 nhưng định danh theo `personID`.
+**Response Error:**
+- `-9002`: FILE_EXTENTION_ERROR
+- `-9006`: EMPLOYEE_REGISTER_IMG_INVALID_ERROR
+- `-5011`: PERSON_NOT_FOUND
 
 ---
 
-## 4. POST `/person/updateByFaceUrl`
-* **Content-Type:** `application/x-www-form-urlencoded`
-* **Tham số:** `token`, `aliasID`, `placeID`, `file_url`
+### POST /person/updateByFaceImageByPersonID
+**Content-Type:** multipart/form-data
+**Auth:** token (form field)
+**Params:**
+| Name | Type | Required | Description |
+|---|---|---|---|
+| token | string | yes | Access token |
+| personID | string | yes | ID do HANET cấp |
+| file | binary | yes | Dữ liệu file ảnh (≤ 5MB) |
+
+**Response Success (HTTP 200):**
+```json
+{
+  "statusCode": 0,
+  "returnCode": 1,
+  "returnMessage": "SUCCESS",
+  "data": {
+    "personID": "mock_HS001_1728470000000",
+    "file": "https://static.hanet.ai/face/employee/mock/updated_face.jpg"
+  }
+}
+```
+
+**Response Error:**
+- `-9006`: EMPLOYEE_REGISTER_IMG_INVALID_ERROR
+- `-5011`: PERSON_NOT_FOUND
 
 ---
 
-## 5. POST `/person/updateByFaceUrlByAliasID`
-* **Content-Type:** `application/x-www-form-urlencoded`
-* **Tham số:** `token`, `aliasID`, `placeID`, `file_url`
+### POST /person/updateByFaceUrl
+**Content-Type:** application/x-www-form-urlencoded
+**Auth:** token (form field)
+**Params:**
+| Name | Type | Required | Description |
+|---|---|---|---|
+| token | string | yes | Access token |
+| aliasID | string | yes | Mã học sinh |
+| placeID | string | yes | ID địa điểm |
+| file_url | string | yes | URL ảnh mới |
+
+**Response Success (HTTP 200):**
+```json
+{
+  "statusCode": 0,
+  "returnCode": 1,
+  "returnMessage": "SUCCESS",
+  "data": { "aliasID": "HS001", "file": "https://static.hanet.ai/face/employee/mock/url_face.jpg" }
+}
+```
+
+**Response Error:**
+- `-503`: SYSTEM_ERROR
+- `-5011`: PERSON_NOT_FOUND
 
 ---
 
-## 6. POST `/person/updateByFaceUrlByPersonID`
-* **Content-Type:** `application/x-www-form-urlencoded`
-* **Tham số:** `token`, `personID`, `file_url`
+### POST /person/updateByFaceUrlByAliasID
+**Content-Type:** application/x-www-form-urlencoded
+**Auth:** token (form field)
+**Params:**
+| Name | Type | Required | Description |
+|---|---|---|---|
+| token | string | yes | Access token |
+| aliasID | string | yes | Mã học sinh |
+| placeID | string | yes | ID địa điểm |
+| file_url | string | yes | URL ảnh mới |
+
+**Response Success (HTTP 200):**
+```json
+{
+  "statusCode": 0,
+  "returnCode": 1,
+  "returnMessage": "SUCCESS",
+  "data": { "aliasID": "HS001", "file": "https://static.hanet.ai/face/employee/mock/url_face.jpg" }
+}
+```
+
+**Response Error:**
+- `-5011`: PERSON_NOT_FOUND
 
 ---
 
-## 7. POST `/person/getListByPlace`
-* **Mục đích:** Lấy toàn bộ danh sách thành viên tại 1 địa điểm.
-* **Content-Type:** `application/x-www-form-urlencoded`
-* **Tham số:** `token`, `placeID`, `type`?
-* **Response Mẫu:**
+### POST /person/updateByFaceUrlByPersonID
+**Content-Type:** application/x-www-form-urlencoded
+**Auth:** token (form field)
+**Params:**
+| Name | Type | Required | Description |
+|---|---|---|---|
+| token | string | yes | Access token |
+| personID | string | yes | ID HANET cấp |
+| file_url | string | yes | URL ảnh mới |
+
+**Response Success (HTTP 200):**
+```json
+{
+  "statusCode": 0,
+  "returnCode": 1,
+  "returnMessage": "SUCCESS",
+  "data": { "personID": "mock_HS001_1728470000000", "file": "https://static.hanet.ai/face/employee/mock/url_face.jpg" }
+}
+```
+
+**Response Error:**
+- `-5011`: PERSON_NOT_FOUND
+
+---
+
+### POST /person/getListByPlace
+**Content-Type:** application/x-www-form-urlencoded
+**Auth:** token (form field)
+**Params:**
+| Name | Type | Required | Description |
+|---|---|---|---|
+| token | string | yes | Access token |
+| placeID | string | yes | ID địa điểm |
+
+**Response Success (HTTP 200):**
 ```json
 {
   "statusCode": 0,
@@ -96,20 +210,28 @@ Tài liệu này mô tả chi tiết định dạng tham số đầu vào và pa
     {
       "personID": "mock_HS001_1728470000000",
       "aliasID": "HS001",
-      "name": "Nguyễn Hoàng Long",
-      "avatar": "https://static.hanet.ai/..."
+      "name": "Nguyen Van A",
+      "avatar": "https://static.hanet.ai/face/employee/mock/avatar.jpg"
     }
   ]
 }
 ```
 
+**Response Error:**
+- `-1`: INVALID_INPUT_ERROR
+
 ---
 
-## 8. POST `/person/removePersonByID`
-* **Mục đích:** Xóa học sinh khỏi địa điểm trên HANET.
-* **Content-Type:** `application/x-www-form-urlencoded`
-* **Tham số:** `token`, `personID`
-* **Response Mẫu:**
+### POST /person/removePersonByID
+**Content-Type:** application/x-www-form-urlencoded
+**Auth:** token (form field)
+**Params:**
+| Name | Type | Required | Description |
+|---|---|---|---|
+| token | string | yes | Access token |
+| personID | string | yes | ID HANET cấp |
+
+**Response Success (HTTP 200):**
 ```json
 {
   "statusCode": 0,
@@ -119,11 +241,22 @@ Tài liệu này mô tả chi tiết định dạng tham số đầu vào và pa
 }
 ```
 
+**Response Error:**
+- `-5011`: PERSON_NOT_FOUND
+
 ---
 
-## 9. POST `/person/getCheckinByPlaceIdInDay` & `/person/getCheckinByPlaceIdInTimestamp`
-* **Mục đích:** Lấy lịch sử điểm danh / nhận diện khuôn mặt.
-* **Response Mẫu:**
+### POST /person/getCheckinByPlaceIdInDay
+**Content-Type:** application/x-www-form-urlencoded
+**Auth:** token (form field)
+**Params:**
+| Name | Type | Required | Description |
+|---|---|---|---|
+| token | string | yes | Access token |
+| placeID | string | yes | ID địa điểm |
+| date | string | yes | Ngày dạng YYYY-MM-DD |
+
+**Response Success (HTTP 200):**
 ```json
 {
   "statusCode": 0,
@@ -133,12 +266,47 @@ Tài liệu này mô tả chi tiết định dạng tham số đầu vào và pa
 }
 ```
 
+**Response Error:**
+- `-1`: INVALID_INPUT_ERROR
+
 ---
 
-## 11. POST `/device/getConnectionStatus`
-* **Mục đích:** Kiểm tra camera tại trường học có đang kết nối mạng không.
-* **Tham số:** `token`, `deviceID`
-* **Response Mẫu:**
+### POST /person/getCheckinByPlaceIdInTimestamp
+**Content-Type:** application/x-www-form-urlencoded
+**Auth:** token (form field)
+**Params:**
+| Name | Type | Required | Description |
+|---|---|---|---|
+| token | string | yes | Access token |
+| placeID | string | yes | ID địa điểm |
+| from | number | yes | Timestamp bắt đầu |
+| to | number | yes | Timestamp kết thúc |
+
+**Response Success (HTTP 200):**
+```json
+{
+  "statusCode": 0,
+  "returnCode": 1,
+  "returnMessage": "SUCCESS",
+  "data": []
+}
+```
+
+**Response Error:**
+- `-1`: INVALID_INPUT_ERROR
+
+---
+
+### POST /device/getConnectionStatus
+**Content-Type:** application/x-www-form-urlencoded
+**Auth:** token (form field)
+**Params:**
+| Name | Type | Required | Description |
+|---|---|---|---|
+| token | string | yes | Access token |
+| deviceID | string | yes | Mã thiết bị camera |
+
+**Response Success (HTTP 200):**
 ```json
 {
   "statusCode": 0,
@@ -147,3 +315,6 @@ Tài liệu này mô tả chi tiết định dạng tham số đầu vào và pa
   "data": { "deviceID": "C20371B302", "status": 1 }
 }
 ```
+
+**Response Error:**
+- `-1`: INVALID_INPUT_ERROR

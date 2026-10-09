@@ -1,30 +1,31 @@
-# CONSTRAINTS — 6 ĐIỀU CẤM BẤT BIẾN
+# CONSTRAINTS — KHÔNG ĐƯỢC VI PHẠM
 
-## C1. Tuyệt đối KHÔNG gọi ra HANET thật
-Mock server không bao giờ được gửi request ra ngoài Internet (partner.hanet.ai). Mọi phản hồi phải được sinh ra tại chỗ từ bộ nhớ.
+### C1. Không gọi HANET thật
+Mock tuyệt đối KHÔNG gọi ra partner.hanet.ai.
+Mọi response sinh tại chỗ.
+**Kiểm tra:** grep -r "hanet.ai" src/ phải không có kết quả (trừ comment).
 
-## C2. Cấu trúc Response phải khớp HANET 100%
-Cấu trúc JSON phản hồi phải chuẩn xác từng trường theo tài liệu của HANET:
-```json
-{
-  "statusCode": 0,
-  "returnCode": 1,
-  "returnMessage": "SUCCESS",
-  "data": { ... }
-}
-```
-Tuyệt đối KHÔNG được tự ý thêm trường lạ, KHÔNG được đổi tên trường (ví dụ: `returnCode` không được đổi thành `code` hay `status`).
+### C2. Response khớp schema HANET 100%
+Cấu trúc JSON khớp từng field: { returnCode, returnMessage, data }
+KHÔNG thêm field lạ, KHÔNG đổi tên field.
+**Kiểm tra:** so sánh JSON output với docs/hanet-endpoints.md.
 
-## C3. Luôn trả HTTP 200 OK
-Đặc thù của HANET Cloud Open API là **luôn trả về mã trạng thái HTTP 200**, ngay cả khi nghiệp vụ thất bại (ví dụ: `returnCode = -503`, `returnCode = -103`, hay `returnCode = -9006`).
-Tuyệt đối KHÔNG được trả về mã HTTP 4xx hoặc 5xx cho các lỗi nghiệp vụ này.
+### C3. Luôn trả HTTP 200
+HANET trả HTTP 200 ngay cả khi returnCode = -503.
+KHÔNG trả HTTP 4xx/5xx cho business logic.
+**Kiểm tra:** curl -I mọi endpoint phải thấy HTTP/1.1 200.
 
-## C4. Hỗ trợ đúng 2 định dạng Content-Type
-* Các endpoint truyền tham số URL/Text: Bắt buộc parse được `application/x-www-form-urlencoded` (hỗ trợ tiếng Việt có dấu qua UTF-8).
-* Các endpoint upload ảnh file nhị phân: Bắt buộc parse được `multipart/form-data`.
+### C4. Parse đúng cả 2 Content-Type
+- application/x-www-form-urlencoded
+- multipart/form-data
+**Kiểm tra:** test cả 2 loại request trong verify.sh.
 
-## C5. Scenario phải điều khiển được ở thời gian thực (Runtime)
-Không được hard-code cố định kịch bản. Người kiểm thử phải có quyền thay đổi kịch bản trả về của mock server theo từng request hoặc toàn cục mà không cần khởi động lại container.
+### C5. Scenario điều khiển được runtime
+Ưu tiên: header > query > body > global override > default.
+Header: x-mock-scenario
+Query: mock_scenario
+**Kiểm tra:** unit test resolver với 5 case.
 
-## C6. Bộ nhớ phải xóa trắng được (Idempotent Reset)
-Phải cung cấp endpoint quản trị nội bộ `DELETE /mock/reset` để xóa sạch dữ liệu học sinh mẫu đã đăng ký và đưa toàn bộ kịch bản về mặc định.
+### C6. State phải reset được
+DELETE /mock/reset xóa sạch: persons, override, counters.
+**Kiểm tra:** gọi reset rồi GET /mock/state phải thấy tất cả = 0.
