@@ -54,6 +54,8 @@ export interface CloudInspectorResponse {
     LM: number;
     ERROR: number;
   };
+  warningMessage?: string | undefined;
+  isPlaceIdAutoCorrected?: boolean | undefined;
   summaryByGroup: Record<
     string,
     {

@@ -419,6 +419,32 @@ export const CloudFaceInspectorTab: React.FC = () => {
         </div>
       )}
 
+      {/* Cảnh báo tự phục hồi cấu hình Place ID */}
+      {data?.warningMessage && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900 flex items-start gap-3 shadow-sm">
+          <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5 flex-shrink-0" />
+          <div className="text-xs space-y-1">
+            <span className="font-bold text-sm text-amber-900">Lưu Ý Cấu Hình Địa Điểm HANET:</span>
+            <p className="text-amber-800 leading-relaxed">{data.warningMessage}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Cảnh báo nếu 0 bản ghi */}
+      {data && data.total === 0 && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50/70 p-4 text-rose-900 flex items-start gap-3 shadow-sm">
+          <AlertTriangle className="h-5 w-5 text-rose-600 mt-0.5 flex-shrink-0" />
+          <div className="text-xs space-y-1">
+            <span className="font-bold text-sm text-rose-900">Không Tìm Thấy Dữ Liệu Face ID Trên Cloud:</span>
+            <p className="text-rose-800 leading-relaxed">
+              HANET Cloud trả về 0 bản ghi cho Địa điểm (PlaceID: <code>{data.placeID || 'Không xác định'}</code>).
+              Nếu bạn đang cấu hình nhầm mã thiết bị Camera (ví dụ: <code>C21272C248</code>) thay vì Place ID địa điểm,
+              vui lòng sửa tệp <code>.env</code> thành <code>HANET_PLACE_ID=998577</code>, khởi động lại container và bấm <b>"Làm mới Cloud"</b>.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Cards Thống Kê Tổng Quan */}
       {data && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

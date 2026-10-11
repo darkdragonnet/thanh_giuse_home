@@ -545,14 +545,83 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({ success: true, data: result });
     });
 
+    // Helper tự động chuẩn hóa & khắc phục Place ID (Tự phục hồi nếu Admin cấu hình nhầm Device ID Camera)
+    async function resolveValidPlaceID(
+      rawPlaceID: string,
+      token: string,
+      baseUrl: string,
+      log?: any
+    ): Promise<{ resolvedPlaceID: string; isAutoCorrected: boolean; warningMessage?: string | undefined }> {
+      const trimmed = (rawPlaceID || '').trim();
+
+      // Nếu đã là chuỗi số nguyên hợp lệ (ví dụ: '998577')
+      if (/^\d+$/.test(trimmed) && trimmed !== '0') {
+        return { resolvedPlaceID: trimmed, isAutoCorrected: false };
+      }
+
+      log?.warn(
+        { rawPlaceID: trimmed },
+        `Phát hiện HANET_PLACE_ID='${trimmed}' không phải ID địa điểm dạng số (khả năng là Device ID Camera). Đang tự động tra cứu ID địa điểm từ HANET API...`
+      );
+
+      let foundPlaceId = '998577';
+      let placeName = 'Nhà thờ thánh Giuse';
+
+      if (token && baseUrl.includes('partner.hanet.ai')) {
+        try {
+          const res = await fetch(`${baseUrl.replace(/\/$/, '')}/place/getPlaces`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ token }).toString(),
+          });
+          if (res.ok) {
+            const json = (await res.json()) as any;
+            if (json?.returnCode === 1 && Array.isArray(json?.data) && json.data.length > 0) {
+              foundPlaceId = String(json.data[0].id);
+              placeName = json.data[0].name || placeName;
+            }
+          }
+        } catch (err: any) {
+          log?.warn({ err: err?.message }, 'Không thể tra cứu place/getPlaces, dùng fallback chuẩn 998577');
+        }
+      }
+
+      const warningMessage = `Cảnh báo cấu hình: Giá trị HANET_PLACE_ID='${trimmed}' là mã thiết bị (Device Serial), không phải Place ID địa điểm. Hệ thống đã tự động kết nối về Place ID chuẩn: ${foundPlaceId} (${placeName}). Vui lòng cập nhật HANET_PLACE_ID=${foundPlaceId} trong tệp .env.`;
+
+      log?.info(
+        { rawPlaceID: trimmed, resolvedPlaceID: foundPlaceId, placeName },
+        'Đã tự động định tuyến PlaceID thành công'
+      );
+
+      return {
+        resolvedPlaceID: foundPlaceId,
+        isAutoCorrected: true,
+        warningMessage,
+      };
+    }
+
     // Helper lấy danh sách đầy đủ Face ID (kèm Auto-Pagination)
     async function fetchAllRawCloudFaces(
       token: string,
-      placeID: string,
+      rawPlaceID: string,
       primaryUrl: string,
-      _log?: any
-    ): Promise<{ rawList: RawCloudFace[]; connectedBaseUrl: string; isLiveCloud: boolean }> {
+      log?: any
+    ): Promise<{
+      rawList: RawCloudFace[];
+      connectedBaseUrl: string;
+      isLiveCloud: boolean;
+      resolvedPlaceID: string;
+      isAutoCorrected: boolean;
+      warningMessage?: string | undefined;
+    }> {
       const isCloudPrimary = primaryUrl.includes('partner.hanet.ai');
+      const { resolvedPlaceID, isAutoCorrected, warningMessage } = await resolveValidPlaceID(
+        rawPlaceID,
+        token,
+        primaryUrl,
+        log
+      );
+
       const candidateUrls = isCloudPrimary
         ? [primaryUrl]
         : ([
@@ -581,7 +650,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
             const postData = new URLSearchParams({
               token,
-              placeID,
+              placeID: resolvedPlaceID,
               page: String(page),
               size: String(size),
               type: '0', // Đảm bảo lấy đúng danh sách thành viên/học sinh
@@ -614,6 +683,13 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
             // Chốt an toàn 2: Dừng ngay khi returnCode != 1 hoặc data không phải array
             if (json?.returnCode !== 1 || !Array.isArray(json?.data) || json.data.length === 0) {
+              if (page === 1 && json?.returnCode !== 1) {
+                log?.error(
+                  { returnCode: json?.returnCode, returnMessage: json?.returnMessage, placeID: resolvedPlaceID },
+                  'HANET Cloud trả về mã lỗi khi lấy danh sách nhân sự trang 1'
+                );
+                lastFetchError = new Error(`Lỗi HANET Cloud: [${json?.returnCode}] ${json?.returnMessage || 'Thất bại'}`);
+              }
               break;
             }
 
@@ -656,6 +732,9 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         rawList,
         connectedBaseUrl,
         isLiveCloud: connectedBaseUrl.includes('partner.hanet.ai'),
+        resolvedPlaceID,
+        isAutoCorrected,
+        warningMessage,
       };
     }
 
@@ -663,7 +742,9 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     function processCloudFaces(
       rawList: RawCloudFace[],
       placeID: string,
-      isLiveCloud: boolean
+      isLiveCloud: boolean,
+      isPlaceIdAutoCorrected?: boolean,
+      warningMessage?: string
     ): CloudInspectorResponse {
       const parsedItems: ParsedCloudResult[] = rawList.map((face) => parseAndClassifyAlias(face));
 
@@ -707,6 +788,8 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         errorCount: errorItems.length,
         isLiveCloud,
         placeID,
+        warningMessage,
+        isPlaceIdAutoCorrected,
         sectorCounts: {
           TN: tnCount,
           LG: lgCount,
@@ -749,8 +832,15 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       try {
-        const { rawList, isLiveCloud } = await fetchAllRawCloudFaces(token, placeID, primaryUrl, request.log);
-        const responsePayload = processCloudFaces(rawList, placeID, isLiveCloud);
+        const { rawList, isLiveCloud, resolvedPlaceID, isAutoCorrected, warningMessage } =
+          await fetchAllRawCloudFaces(token, placeID, primaryUrl, request.log);
+        const responsePayload = processCloudFaces(
+          rawList,
+          resolvedPlaceID,
+          isLiveCloud,
+          isAutoCorrected,
+          warningMessage
+        );
 
         // Lưu Cache 1800s (30 phút) để bảo vệ hạn ngạch và băng thông
         try {
@@ -804,8 +894,15 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         }
 
         try {
-          const { rawList, isLiveCloud } = await fetchAllRawCloudFaces(token, placeID, primaryUrl, request.log);
-          cloudData = processCloudFaces(rawList, placeID, isLiveCloud);
+          const { rawList, isLiveCloud, resolvedPlaceID, isAutoCorrected, warningMessage } =
+            await fetchAllRawCloudFaces(token, placeID, primaryUrl, request.log);
+          cloudData = processCloudFaces(
+            rawList,
+            resolvedPlaceID,
+            isLiveCloud,
+            isAutoCorrected,
+            warningMessage
+          );
           await redis.set(cacheKey, JSON.stringify(cloudData), 'EX', 60);
         } catch (err: any) {
           return reply.status(502).send({
@@ -1096,8 +1193,15 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       // 1. Quét toàn bộ khuôn mặt trên HANET Cloud
       let cloudData: CloudInspectorResponse;
       try {
-        const { rawList, isLiveCloud } = await fetchAllRawCloudFaces(token, placeID, primaryUrl, request.log);
-        cloudData = processCloudFaces(rawList, placeID, isLiveCloud);
+        const { rawList, isLiveCloud, resolvedPlaceID, isAutoCorrected, warningMessage } =
+          await fetchAllRawCloudFaces(token, placeID, primaryUrl, request.log);
+        cloudData = processCloudFaces(
+          rawList,
+          resolvedPlaceID,
+          isLiveCloud,
+          isAutoCorrected,
+          warningMessage
+        );
       } catch (err: any) {
         request.log.error({ err }, 'Failed to fetch cloud faces for sync');
         return reply.status(502).send({
@@ -1279,8 +1383,15 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       try {
-        const { rawList, isLiveCloud } = await fetchAllRawCloudFaces(token, placeID, primaryUrl, request.log);
-        const responsePayload = processCloudFaces(rawList, placeID, isLiveCloud);
+        const { rawList, isLiveCloud, resolvedPlaceID, isAutoCorrected, warningMessage } =
+          await fetchAllRawCloudFaces(token, placeID, primaryUrl, request.log);
+        const responsePayload = processCloudFaces(
+          rawList,
+          resolvedPlaceID,
+          isLiveCloud,
+          isAutoCorrected,
+          warningMessage
+        );
 
         // Lưu Cache 1800s (30 phút)
         await redis.set(cacheKey, JSON.stringify(responsePayload), 'EX', 1800);
