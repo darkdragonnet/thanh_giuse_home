@@ -13,7 +13,7 @@
     "dev:worker": "npm run dev --workspace=@thanh-giuse/worker",
     "dev:admin": "npm run dev --workspace=@thanh-giuse/admin",
     "build": "npm run build:packages && npm run build:apps",
-    "build:packages": "npm run build --workspace=@thanh-giuse/shared-types && npm run build --workspace=@thanh-giuse/shared-infra && npm run build --workspace=@thanh-giuse/hanet-client && npm run build --workspace=@thanh-giuse/error-mapping",
+    "build:packages": "npm run build --workspace=@thanh-giuse/shared-types && npm run build --workspace=@thanh-giuse/error-mapping && npm run build --workspace=@thanh-giuse/hanet-client && npm run build --workspace=@thanh-giuse/shared-infra",
     "build:apps": "npm run build --workspace=@thanh-giuse/api && npm run build --workspace=@thanh-giuse/worker && npm run build --workspace=@thanh-giuse/hanet-mock && npm run build --workspace=@thanh-giuse/admin",
     "build:mock": "npm run build --workspace=apps/hanet-mock",
     "seed:classes": "npm run seed:classes --workspace=@thanh-giuse/shared-infra",
