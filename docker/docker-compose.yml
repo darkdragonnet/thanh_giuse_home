@@ -112,7 +112,7 @@ services:
     restart: unless-stopped
     working_dir: /app
     ports:
-      - "3000:3000"
+      - "${API_PORT:-3002}:3000"
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       NODE_OPTIONS: "--max-old-space-size=384"
