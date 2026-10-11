@@ -5,6 +5,7 @@ export interface RawCloudFace {
   file?: string;
   avatar?: string;
   title?: string;
+  departmentID?: number | string;
 }
 
 export type CloudErrorCode =
@@ -28,7 +29,8 @@ export interface ParsedCloudResult {
   nhom3_id?: string;
   tenLopTiengViet?: string;
   maLopChuanHoa?: string;
-  aliasChuanHoaDuKien?: string;
+  aliasChuanHoaDuKien?: string | undefined;
+  departmentID?: number | string | undefined;
   isError: boolean;
   errorCode?: CloudErrorCode;
   errorReason?: string;
@@ -190,6 +192,7 @@ export function parseAndClassifyAlias(face: RawCloudFace): ParsedCloudResult {
       tenLopTiengViet: dictItem?.label || `Lớp ${prefix}`,
       maLopChuanHoa: prefix!.toUpperCase(),
       aliasChuanHoaDuKien: raw,
+      departmentID: face.departmentID,
       isError: false,
     };
   }
@@ -230,6 +233,7 @@ export function parseAndClassifyAlias(face: RawCloudFace): ParsedCloudResult {
       tenLopTiengViet: dictItem?.label || `Lớp ${finalPrefix}`,
       maLopChuanHoa: finalPrefix,
       aliasChuanHoaDuKien,
+      departmentID: face.departmentID,
       isError: false,
     };
   }
@@ -262,6 +266,7 @@ export function parseAndClassifyAlias(face: RawCloudFace): ParsedCloudResult {
       tenLopTiengViet: dictItem?.label || `Lớp ${maLopChuanHoa}`,
       maLopChuanHoa,
       aliasChuanHoaDuKien,
+      departmentID: face.departmentID,
       isError: false,
     };
   }
@@ -294,6 +299,7 @@ export function parseAndClassifyAlias(face: RawCloudFace): ParsedCloudResult {
       tenLopTiengViet: dictItem?.label || `Lớp ${maLopChuanHoa}`,
       maLopChuanHoa,
       aliasChuanHoaDuKien,
+      departmentID: face.departmentID,
       isError: false,
     };
   }

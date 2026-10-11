@@ -986,15 +986,15 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // 3. Tải bản đồ thông tin lớp (classes) để map department_code và class code
-      const classesRes = await fastify.pg.query<{ id: number; code: string; department_code: string | null }>(
-        'SELECT id, code, department_code FROM classes'
+      // 3. Tải bản đồ thông tin lớp (classes) để map class code
+      const classesRes = await fastify.pg.query<{ id: number; code: string }>(
+        'SELECT id, code FROM classes'
       );
       const classMap = new Map<number, { code: string; departmentCode: string }>();
       for (const c of classesRes.rows) {
         classMap.set(c.id, {
           code: c.code,
-          departmentCode: c.department_code || c.code,
+          departmentCode: c.code,
         });
       }
 
@@ -1019,6 +1019,14 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         const classCode = classInfo?.code || 'DEFAULT';
 
         if (s.person_id) {
+          // Tính toán mã chuẩn hóa 9 ký tự qua parseAndClassifyAlias
+          const parsed = parseAndClassifyAlias({
+            personID: s.person_id,
+            name: s.name,
+            aliasID: s.alias_id,
+          });
+          const targetAlias = (!parsed.isError && parsed.aliasChuanHoaDuKien) ? parsed.aliasChuanHoaDuKien : s.alias_id;
+
           // Job update_alias: Quy trình 2 bước đổi alias & bảo toàn phòng ban
           await registrationQueue.add(
             'update_alias',
@@ -1027,7 +1035,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
               studentId: s.id,
               classId: s.class_id,
               aliasId: s.alias_id,
-              newAlias: s.alias_id,
+              newAlias: targetAlias,
               personId: s.person_id,
               studentName: s.name,
               departmentId: deptId,
@@ -1064,6 +1072,157 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         batchId,
         queuedCount: eligibleStudents.length,
         message: `Đã đưa ${eligibleStudents.length} học sinh vào hàng đợi đồng bộ`,
+      });
+    });
+
+    // 14b. POST /api/admin/hanet/sync-cloud-aliases (Chuẩn hóa toàn bộ 137 Face ID trên Cloud HANET về chuẩn 9 ký tự)
+    protectedRoutes.post('/hanet/sync-cloud-aliases', async (request, reply) => {
+      const token = process.env.HANET_ACCESS_TOKEN || process.env.HANET_TOKEN || '';
+      const placeID = process.env.HANET_PLACE_ID || '998577';
+      const primaryUrl = (process.env.HANET_API_BASE_URL || 'https://partner.hanet.ai').replace(/\/$/, '');
+
+      if (!token) {
+        return reply.status(500).send({
+          success: false,
+          message: 'Thiếu cấu hình HANET_ACCESS_TOKEN (.env)',
+        });
+      }
+
+      // 1. Quét toàn bộ khuôn mặt trên HANET Cloud
+      let cloudData: CloudInspectorResponse;
+      try {
+        const { rawList, isLiveCloud } = await fetchAllRawCloudFaces(token, placeID, primaryUrl, request.log);
+        cloudData = processCloudFaces(rawList, placeID, isLiveCloud);
+      } catch (err: any) {
+        request.log.error({ err }, 'Failed to fetch cloud faces for sync');
+        return reply.status(502).send({
+          success: false,
+          message: `Lỗi kết nối HANET Cloud: ${err.message || 'Không thể lấy dữ liệu'}`,
+        });
+      }
+
+      // 2. Lọc các khuôn mặt hợp lệ có aliasChuanHoaDuKien
+      const validItems = cloudData.items.filter((item) => !item.isError && item.aliasChuanHoaDuKien);
+      if (validItems.length === 0) {
+        return reply.send({
+          success: true,
+          batchId: null,
+          queuedCount: 0,
+          message: 'Không tìm thấy khuôn mặt nào cần chuẩn hóa trên Cloud.',
+        });
+      }
+
+      // 3. Tải danh sách học sinh hiện có trong DB để ánh xạ person_id
+      const existingStudentsRes = await fastify.pg.query<{ id: number; person_id: string; alias_id: string }>(
+        'SELECT id, person_id, alias_id FROM students WHERE person_id IS NOT NULL'
+      );
+      const studentByPersonId = new Map(existingStudentsRes.rows.map((r) => [r.person_id, r]));
+
+      // Tải danh sách lớp để ánh xạ maLopChuanHoa -> class_id
+      const classesRes = await fastify.pg.query<{ id: number; code: string }>(
+        'SELECT id, code FROM classes'
+      );
+      const classByCode = new Map(classesRes.rows.map((c) => [c.code.toUpperCase(), c.id]));
+      const defaultClassId = classesRes.rows.length > 0 ? classesRes.rows[0]?.id : null;
+
+      // 4. Chuẩn bị danh sách jobs và auto-provision các học sinh chưa có trong DB
+      const targetJobs: Array<{
+        studentId: number;
+        classId?: number | undefined;
+        aliasId: string;
+        newAlias: string;
+        personId: string;
+        studentName: string;
+        departmentId: string | number;
+      }> = [];
+
+      for (const item of validItems) {
+        let studentId: number;
+        let classId: number | undefined;
+
+        const matchedClassId = item.maLopChuanHoa ? classByCode.get(item.maLopChuanHoa.toUpperCase()) : undefined;
+        classId = matchedClassId || defaultClassId || undefined;
+
+        if (studentByPersonId.has(item.personID)) {
+          const existing = studentByPersonId.get(item.personID)!;
+          studentId = existing.id;
+          await fastify.pg.query(
+            "UPDATE students SET status = 'pending', updated_at = NOW() WHERE id = $1",
+            [studentId]
+          );
+        } else {
+          // Auto-provision học sinh thiếu nhi chưa có trong DB VPS
+          const insertRes = await fastify.pg.query<{ id: number }>(
+            `INSERT INTO students (name, alias_id, person_id, class_id, status, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, 'pending', NOW(), NOW())
+             ON CONFLICT (alias_id) DO UPDATE 
+             SET person_id = EXCLUDED.person_id,
+                 name = EXCLUDED.name,
+                 class_id = COALESCE(EXCLUDED.class_id, students.class_id),
+                 status = 'pending',
+                 updated_at = NOW()
+             RETURNING id`,
+            [item.name, item.rawAliasID, item.personID, classId || null]
+          );
+          studentId = insertRes.rows[0]!.id;
+        }
+
+        // Risk A: Xác định departmentId an toàn
+        const finalDeptId = (item.departmentID && String(item.departmentID) !== '0')
+          ? String(item.departmentID)
+          : (item.nhom1_nganh === 'LM' ? '990730' : '990653');
+
+        targetJobs.push({
+          studentId,
+          classId,
+          aliasId: item.rawAliasID,
+          newAlias: item.aliasChuanHoaDuKien!,
+          personId: item.personID,
+          studentName: item.name,
+          departmentId: finalDeptId,
+        });
+      }
+
+      // 5. Khởi tạo Batch ID và Redis Hash với TTL 7200s (2 giờ)
+      const batchId = `batch_cloud_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+      const batchKey = `batch:${batchId}`;
+      await redis.hset(batchKey, {
+        batch_id: batchId,
+        total: targetJobs.length,
+        processed: 0,
+        success: 0,
+        failed: 0,
+        is_done: '0',
+        created_at: new Date().toISOString(),
+      });
+      await redis.expire(batchKey, 7200);
+
+      // 6. Enqueue từng job vào BullMQ registration_queue (Priority = 1)
+      for (const j of targetJobs) {
+        await registrationQueue.add(
+          'update_alias',
+          {
+            batchId,
+            studentId: j.studentId,
+            classId: j.classId,
+            aliasId: j.aliasId,
+            newAlias: j.newAlias,
+            personId: j.personId,
+            studentName: j.studentName,
+            departmentId: j.departmentId,
+          },
+          {
+            jobId: `update_alias_cloud_${batchId}_${j.personId}`,
+            priority: 1, // Admin priority cao nhất
+          }
+        );
+      }
+
+      return reply.status(202).send({
+        success: true,
+        batchId,
+        queuedCount: targetJobs.length,
+        message: `Đã đưa ${targetJobs.length} khuôn mặt vào hàng đợi chuẩn hóa AliasID 9 ký tự trên Cloud HANET`,
       });
     });
 

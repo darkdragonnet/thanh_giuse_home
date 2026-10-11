@@ -276,6 +276,19 @@ describe('Kiểm thử Hệ thống Đối Soát & Đồng Bộ AliasID (Phase 4
       expect(res.aliasChuanHoaDuKien).toHaveLength(9);
     });
 
+    it('Phải bảo toàn trường departmentID từ dữ liệu Cloud sang kết quả phân tích', () => {
+      const res = parseAndClassifyAlias({
+        personID: '77777',
+        name: 'PHÊRÔ Trần Minh Mẫn',
+        aliasID: 'GLV_FNWD',
+        departmentID: 990653,
+      });
+
+      expect(res.isError).toBe(false);
+      expect(res.departmentID).toBe(990653);
+      expect(res.aliasChuanHoaDuKien).toBe('GLV0_FNWD');
+    });
+
     it('Phải bắt lỗi nếu alias trống', () => {
       const res = parseAndClassifyAlias({
         personID: '99999',
@@ -285,6 +298,81 @@ describe('Kiểm thử Hệ thống Đối Soát & Đồng Bộ AliasID (Phase 4
 
       expect(res.isError).toBe(true);
       expect(res.errorCode).toBe('ERR_EMPTY_ALIAS');
+    });
+  });
+
+  describe('Cơ Chế Phòng Ngừa: Invalidation Cache khi Hoàn Tất Batch', () => {
+    it('Phải chủ động xóa cache cache:hanet:real_cloud_faces khi batch đạt 100%', async () => {
+      let isDoneSet = false;
+      let cacheDeleted = false;
+
+      const mockRedis = {
+        hincrby: vi.fn().mockResolvedValue(1),
+        hget: vi.fn().mockImplementation((_key, field) => {
+          if (field === 'total') return Promise.resolve('1');
+          if (field === 'processed') return Promise.resolve('1');
+          return Promise.resolve(null);
+        }),
+        hset: vi.fn().mockImplementation((_key, field, val) => {
+          if (field === 'is_done' && val === '1') isDoneSet = true;
+          return Promise.resolve(1);
+        }),
+        del: vi.fn().mockImplementation((key) => {
+          if (key === 'cache:hanet:real_cloud_faces') cacheDeleted = true;
+          return Promise.resolve(1);
+        }),
+      };
+
+      const mockStudentRepo = {
+        updateAliasSuccess: vi.fn().mockResolvedValue(undefined),
+        markFailure: vi.fn().mockResolvedValue(undefined),
+        recordSyncConflict: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const mockLogRepo = {
+        recordLog: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const mockHanetClient = {
+        updateAliasID: vi.fn().mockResolvedValue({
+          success: true,
+          evaluation: { action: 'SUCCESS', returnMessage: 'Success' },
+        }),
+        addPersonToDepartment: vi.fn().mockResolvedValue({
+          success: true,
+          evaluation: { action: 'SUCCESS', returnMessage: 'Success' },
+        }),
+      };
+
+      const jobData = {
+        batchId: 'batch_test_invalidation',
+        studentId: 99,
+        aliasId: 'GLV_FK2S',
+        newAlias: 'GLV0_FK2S',
+        personId: 'HANET_999',
+        studentName: 'Test Student',
+        departmentId: 990653,
+      };
+
+      const job = {
+        id: 'job_test_done',
+        data: jobData,
+      } as any;
+
+      const context: any = {
+        studentRepo: mockStudentRepo,
+        logRepo: mockLogRepo,
+        redisClient: mockRedis,
+        hanetClient: mockHanetClient,
+        settingsRepo: null,
+        pauseWorker: vi.fn(),
+      };
+
+      const result = await handleUpdateAlias(job, context);
+      expect(result.success).toBe(true);
+      expect(isDoneSet).toBe(true);
+      expect(cacheDeleted).toBe(true);
+      expect(mockRedis.del).toHaveBeenCalledWith('cache:hanet:real_cloud_faces');
     });
   });
 });

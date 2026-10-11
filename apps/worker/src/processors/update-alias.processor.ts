@@ -12,6 +12,30 @@ export interface UpdateAliasJobData {
   departmentId: string | number;
 }
 
+async function recordBatchProgress(
+  redisClient: any,
+  batchId: string | undefined,
+  isSuccess: boolean
+) {
+  if (!batchId || !redisClient) return;
+  const batchKey = `batch:${batchId}`;
+  await redisClient.hincrby(batchKey, 'processed', 1);
+  if (isSuccess) {
+    await redisClient.hincrby(batchKey, 'success', 1);
+  } else {
+    await redisClient.hincrby(batchKey, 'failed', 1);
+  }
+  const [total, processed] = await Promise.all([
+    redisClient.hget(batchKey, 'total'),
+    redisClient.hget(batchKey, 'processed'),
+  ]);
+  if (total && processed && Number(processed) >= Number(total)) {
+    await redisClient.hset(batchKey, 'is_done', '1');
+    await redisClient.del('cache:hanet:real_cloud_faces');
+    console.log(`[UPDATE_ALIAS] Batch ${batchId} hoàn tất. Đã chủ động xóa cache:hanet:real_cloud_faces.`);
+  }
+}
+
 /**
  * Xử lý tác vụ đổi AliasID và bảo toàn phòng ban (Quy trình 2 bước)
  * Ràng buộc: Concurrency = 1, timeout 120s, bảo vệ VPS 3GB RAM
@@ -46,10 +70,7 @@ export async function handleUpdateAlias(
       'LEGACY_FORMAT_QUARANTINED',
       `Mã alias "${newAlias}" không khớp chuẩn 9 ký tự.`
     );
-    if (batchId && redisClient) {
-      await redisClient.hincrby(`batch:${batchId}`, 'processed', 1);
-      await redisClient.hincrby(`batch:${batchId}`, 'failed', 1);
-    }
+    await recordBatchProgress(redisClient, batchId, false);
     throw new UnrecoverableError(`AliasID "${newAlias}" không khớp chuẩn 9 ký tự: vi phạm Hiến pháp.`);
   }
 
@@ -99,10 +120,7 @@ export async function handleUpdateAlias(
       }
       if (settingsRepo) await settingsRepo.setRegistrationEnabled(false);
       await studentRepo.markFailure(studentId, 'manual_review', '-9008', 'Hết quota Face ID trên HANET Cloud');
-      if (batchId && redisClient) {
-        await redisClient.hincrby(`batch:${batchId}`, 'processed', 1);
-        await redisClient.hincrby(`batch:${batchId}`, 'failed', 1);
-      }
+      await recordBatchProgress(redisClient, batchId, false);
       throw new UnrecoverableError('HANET Cloud đã hết quota Face ID (-9008). Tạm ngắt hàng đợi.');
     }
 
@@ -121,10 +139,7 @@ export async function handleUpdateAlias(
         result_code: 'PERSON_NOT_FOUND',
         result_message: `Lỗi -5011: personID ${personId} không tồn tại trên Cloud. Đã bảo tồn person_id và chuyển manual_review.`,
       });
-      if (batchId && redisClient) {
-        await redisClient.hincrby(`batch:${batchId}`, 'processed', 1);
-        await redisClient.hincrby(`batch:${batchId}`, 'failed', 1);
-      }
+      await recordBatchProgress(redisClient, batchId, false);
       return { success: false, reason: 'PERSON_NOT_FOUND' };
     }
 
@@ -152,10 +167,7 @@ export async function handleUpdateAlias(
           '-9005',
           `Alias "${newAlias}" đã tồn tại trên Cloud với mã khác.`
         );
-        if (batchId && redisClient) {
-          await redisClient.hincrby(`batch:${batchId}`, 'processed', 1);
-          await redisClient.hincrby(`batch:${batchId}`, 'failed', 1);
-        }
+        await recordBatchProgress(redisClient, batchId, false);
         return { success: false, reason: 'CONFLICT_EXISTING' };
       }
     }
@@ -167,10 +179,7 @@ export async function handleUpdateAlias(
 
     // Lỗi khác -> chuyển manual_review
     await studentRepo.markFailure(studentId, 'manual_review', String(returnCode), evaluation.userFacingMessage);
-    if (batchId && redisClient) {
-      await redisClient.hincrby(`batch:${batchId}`, 'processed', 1);
-      await redisClient.hincrby(`batch:${batchId}`, 'failed', 1);
-    }
+    await recordBatchProgress(redisClient, batchId, false);
     return { success: false, reason: `ERROR_${returnCode}` };
   }
 
@@ -207,19 +216,9 @@ export async function handleUpdateAlias(
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // BƯỚC 5: CẬP NHẬT TIẾN ĐỘ REDIS BATCH HASH
+  // BƯỚC 5: CẬP NHẬT TIẾN ĐỘ REDIS BATCH HASH & TỰ ĐỘNG XÓA CACHE KHI XONG
   // ═══════════════════════════════════════════════════════════════════════════
-  if (batchId && redisClient) {
-    const batchKey = `batch:${batchId}`;
-    await redisClient.hincrby(batchKey, 'processed', 1);
-    await redisClient.hincrby(batchKey, 'success', 1);
-
-    const total = await redisClient.hget(batchKey, 'total');
-    const processed = await redisClient.hget(batchKey, 'processed');
-    if (total && processed && Number(processed) >= Number(total)) {
-      await redisClient.hset(batchKey, 'is_done', '1');
-    }
-  }
+  await recordBatchProgress(redisClient, batchId, true);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // BƯỚC 6: COOLDOWN NGHỈ GIỮA CÁC JOB LIÊN TIẾP (BẢO VỆ RATE LIMIT 30 REQ/PHÚT CỦA HANET)

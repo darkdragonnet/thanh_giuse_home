@@ -103,6 +103,35 @@ export const CloudFaceInspectorTab: React.FC = () => {
     }
   };
 
+  const handleSyncAllCloudAliases = async () => {
+    const totalCount = data?.total || 137;
+    const isConfirm = window.confirm(
+      `Xác nhận bắt đầu tiến trình chuẩn hóa toàn bộ ${totalCount} Face ID trên HANET Cloud lên chuẩn 9 ký tự?\n\n` +
+      `• Quy trình 2 bước: updateAliasID -> Delay 120ms -> addPersonToDepartment\n` +
+      `• Rate Limit Giãn cách an toàn: 3 giây/người (tần suất ~20 req/phút)\n` +
+      `• Ước tính thời gian: ~7 - 8 phút\n\n` +
+      `Bạn có muốn tiếp tục?`
+    );
+    if (!isConfirm) return;
+
+    try {
+      const res = await apiClient.post<{
+        success: boolean;
+        batchId: string;
+        queuedCount: number;
+        message: string;
+      }>('/hanet/sync-cloud-aliases');
+      if (res.success && res.batchId) {
+        setBatchId(res.batchId);
+        setDrawerOpen(true);
+      } else {
+        alert(res.message || 'Không có bản ghi nào cần đồng bộ');
+      }
+    } catch (err: any) {
+      alert(`Lỗi kích hoạt chuẩn hóa Cloud: ${err.message || 'Thất bại'}`);
+    }
+  };
+
   const handleSyncClass = async (classId?: number) => {
     try {
       const res = await apiClient.post<{
@@ -248,11 +277,11 @@ export const CloudFaceInspectorTab: React.FC = () => {
             Nạp đối soát Cloud (10p)
           </button>
           <button
-            onClick={() => handleSyncClass()}
+            onClick={handleSyncAllCloudAliases}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-blue-600 bg-blue-600 text-xs font-semibold text-white hover:bg-blue-700 shadow-sm"
           >
             <Cloud className="h-4 w-4" />
-            Đồng bộ AliasID
+            Đồng bộ Chuẩn Hóa Cloud (9 ký tự)
           </button>
           <button
             onClick={fetchDriftData}
