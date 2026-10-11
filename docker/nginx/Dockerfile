@@ -12,13 +12,12 @@ COPY package*.json tsconfig*.json ./
 COPY packages/ ./packages/
 COPY apps/admin/ ./apps/admin/
 COPY apps/student/ ./apps/student/
-COPY frontend/ ./frontend/
 
 # Cài đặt dependencies và build static assets
 RUN npm ci --ignore-scripts || npm install
 RUN npm run build:packages
 RUN npm run build --workspace=@thanh-giuse/admin
-RUN mkdir -p apps/student/dist && cp frontend/dist/index.html apps/student/dist/index.html
+RUN mkdir -p apps/student/dist && cp apps/student/index.html apps/student/dist/index.html
 
 # -------------------------------------------------------------
 # STAGE 2: Nginx Runtime (Không có Node.js Runtime)

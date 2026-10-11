@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cổng Đăng Ký Khuôn Mặt Học Sinh — HANET School</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; margin: 0; padding: 20px; }
+    .card { max-width: 520px; margin: 20px auto; background: #fff; padding: 24px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+    h2 { margin-top: 0; color: #1a1a1a; text-align: center; }
+    .form-group { margin-bottom: 16px; }
+    label { display: block; margin-bottom: 6px; font-weight: 600; color: #333; }
+    select, input, textarea, button { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; font-size: 15px; }
+    
+    /* Buttons */
+    .btn-group { display: flex; gap: 10px; margin-top: 15px; }
+    .btn-primary { background: #0066cc; color: #fff; border: none; font-weight: 600; cursor: pointer; flex: 1; padding: 12px; border-radius: 8px; }
+    .btn-primary:disabled { background: #9ca3af; cursor: not-allowed; }
+    .btn-secondary { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; font-weight: 600; cursor: pointer; padding: 12px 18px; border-radius: 8px; white-space: nowrap; }
+    .btn-secondary:hover { background: #e5e7eb; }
+    
+    .status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 20px; font-size: 14px; font-weight: 600; margin-top: 8px; }
+    .badge-empty { background: #f3f4f6; color: #4b5563; border: 1px solid #d1d5db; }
+    .badge-pending { background: #fef9c3; color: #854d0e; border: 1px solid #facc15; }
+    .badge-success { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+    .badge-error { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+    .badge-manual_review { background: #ffedd5; color: #9a3412; border: 1px solid #fdba74; }
+
+    .preview-box { margin-top: 15px; text-align: center; }
+    img { max-width: 100%; max-height: 240px; border-radius: 8px; display: none; margin: 0 auto; }
+    .status-msg { margin-top: 15px; padding: 12px; border-radius: 8px; font-size: 14px; display: none; }
+    .status-msg.success { background: #e6f4ea; color: #137333; }
+    .status-msg.error { background: #fce8e6; color: #c5221f; }
+
+    /* Modal Gửi Admin */
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
+    .modal-box { background: #fff; max-width: 440px; width: 100%; padding: 24px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+    .modal-header { font-size: 18px; font-weight: 700; margin-bottom: 12px; color: #111; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h2>Cổng Nộp Ảnh Nhận Diện</h2>
+  
+  <div class="form-group">
+    <label for="studentSelect">Chọn học sinh:</label>
+    <select id="studentSelect">
+      <option value="">-- Đang tải danh sách học sinh --</option>
+    </select>
+    <div id="studentStatusDisplay"></div>
+  </div>
+
+  <div class="form-group" id="photoGroup">
+    <label for="photoInput">Chụp hoặc chọn ảnh chân dung:</label>
+    <input type="file" id="photoInput" accept="image/jpeg,image/png" capture="user">
+  </div>
+
+  <div class="preview-box">
+    <img id="previewImg" alt="Xem trước ảnh">
+  </div>
+
+  <div class="btn-group">
+    <button id="submitBtn" class="btn-primary" disabled>Đăng ký</button>
+    <button id="contactAdminBtn" class="btn-secondary" style="display: none;">Gửi admin</button>
+  </div>
+
+  <div id="statusMsg" class="status-msg"></div>
+</div>
+
+<!-- Modal Gửi Admin -->
+<div id="adminModal" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-header">Gửi yêu cầu hỗ trợ tới Quản trị viên</div>
+    <p style="font-size: 14px; color: #555;">Thầy cô / Quản trị viên sẽ kiểm tra và đăng ký trực tiếp cho bạn.</p>
+    <div class="form-group">
+      <label for="adminNote">Ghi chú (tùy chọn):</label>
+      <textarea id="adminNote" rows="3" placeholder="Mô tả sự cố (VD: khuôn mặt không nhận diện được, lỗi mạng...)"></textarea>
+    </div>
+    <div class="btn-group">
+      <button id="sendAdminSubmitBtn" class="btn-primary">Gửi ngay</button>
+      <button id="closeModalBtn" class="btn-secondary">Hủy</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const studentSelect = document.getElementById('studentSelect');
+  const studentStatusDisplay = document.getElementById('studentStatusDisplay');
+  const photoInput = document.getElementById('photoInput');
+  const submitBtn = document.getElementById('submitBtn');
+  const contactAdminBtn = document.getElementById('contactAdminBtn');
+  const previewImg = document.getElementById('previewImg');
+  const statusMsg = document.getElementById('statusMsg');
+
+  const adminModal = document.getElementById('adminModal');
+  const adminNote = document.getElementById('adminNote');
+  const sendAdminSubmitBtn = document.getElementById('sendAdminSubmitBtn');
+  const closeModalBtn = document.getElementById('closeModalBtn');
+
+  let studentsList = [];
+  let currentStudent = null;
+  let compressedBlob = null;
+
+  // Cấu hình 5 trạng thái chuẩn hóa
+  const STATUS_CONFIG = {
+    empty: {
+      label: 'Chưa nộp ảnh',
+      badgeClass: 'badge-empty',
+      dot: '⚪',
+      btnText: 'Đăng ký',
+      disabled: false,
+      showSecondary: false
+    },
+    pending: {
+      label: 'Đang xử lý...',
+      badgeClass: 'badge-pending',
+      dot: '🟡',
+      btnText: 'Đang xử lý...',
+      disabled: true,
+      showSecondary: true
+    },
+    success: {
+      label: 'Đã hoàn tất',
+      badgeClass: 'badge-success',
+      dot: '🟢',
+      btnText: 'Cập nhật hình',
+      disabled: false,
+      showSecondary: true
+    },
+    error: {
+      label: 'Lỗi xử lý',
+      badgeClass: 'badge-error',
+      dot: '🔴',
+      btnText: 'Đã xảy ra lỗi',
+      disabled: true,
+      showSecondary: true
+    },
+    manual_review: {
+      label: 'Chờ duyệt',
+      badgeClass: 'badge-manual_review',
+      dot: '🟠',
+      btnText: 'Chờ duyệt',
+      disabled: true,
+      showSecondary: true
+    }
+  };
+
+  // 1. Tải danh sách học sinh
+  async function loadStudents() {
+    try {
+      const res = await fetch('/api/classes/1/students');
+      studentsList = await res.json();
+      studentSelect.innerHTML = '<option value="">-- Chọn tên của bạn --</option>';
+      studentsList.forEach(st => {
+        const opt = document.createElement('option');
+        const cfg = STATUS_CONFIG[st.status] || STATUS_CONFIG.empty;
+        opt.value = st.id;
+        opt.textContent = `${cfg.dot} ${st.name} (${cfg.label})`;
+        studentSelect.appendChild(opt);
+      });
+    } catch (err) {
+      showStatus('Không thể tải danh sách học sinh', false);
+    }
+  }
+
+  // 2. Cập nhật giao diện khi chọn học sinh
+  studentSelect.addEventListener('change', () => {
+    const selectedId = parseInt(studentSelect.value, 10);
+    currentStudent = studentsList.find(s => s.id === selectedId) || null;
+
+    if (!currentStudent) {
+      studentStatusDisplay.innerHTML = '';
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Đăng ký';
+      contactAdminBtn.style.display = 'none';
+      return;
+    }
+
+    const cfg = STATUS_CONFIG[currentStudent.status] || STATUS_CONFIG.empty;
+    studentStatusDisplay.innerHTML = `
+      <div class="status-badge ${cfg.badgeClass}">
+        <span>${cfg.dot}</span>
+        <span>${cfg.label}</span>
+      </div>
+    `;
+
+    submitBtn.textContent = cfg.btnText;
+    contactAdminBtn.style.display = cfg.showSecondary ? 'block' : 'none';
+
+    validateForm();
+  });
+
+  // 3. Client-side Image Pre-compression (Canvas)
+  photoInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const MAX_WIDTH = 1920;
+      let width = img.width;
+      let height = img.height;
+
+      if (width > MAX_WIDTH) {
+        height = Math.round((height * MAX_WIDTH) / width);
+        width = MAX_WIDTH;
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+
+      canvas.toBlob((blob) => {
+        compressedBlob = blob;
+        previewImg.src = URL.createObjectURL(blob);
+        previewImg.style.display = 'block';
+        validateForm();
+      }, 'image/jpeg', 0.85);
+    };
+    img.src = URL.createObjectURL(file);
+  });
+
+  function validateForm() {
+    if (!currentStudent) {
+      submitBtn.disabled = true;
+      return;
+    }
+    const cfg = STATUS_CONFIG[currentStudent.status] || STATUS_CONFIG.empty;
+    if (cfg.disabled) {
+      submitBtn.disabled = true;
+    } else {
+      submitBtn.disabled = !(currentStudent && compressedBlob);
+    }
+  }
+
+  function showStatus(msg, isSuccess) {
+    statusMsg.textContent = msg;
+    statusMsg.className = `status-msg ${isSuccess ? 'success' : 'error'}`;
+    statusMsg.style.display = 'block';
+  }
+
+  // 4. Nộp ảnh nhận diện (Nút chính)
+  submitBtn.addEventListener('click', async () => {
+    if (!currentStudent || !compressedBlob) return;
+    submitBtn.disabled = true;
+    showStatus('Đang tải ảnh lên...', true);
+
+    const formData = new FormData();
+    formData.append('file', compressedBlob, 'student_photo.jpg');
+
+    try {
+      const res = await fetch(`/api/students/${currentStudent.id}/photo`, {
+        method: 'POST',
+        body: formData
+      });
+      const result = await res.json();
+
+      if (res.ok) {
+        showStatus('Đã gửi ảnh thành công! Hệ thống đang xếp hàng xử lý.', true);
+        await loadStudents();
+      } else {
+        showStatus(result.message || 'Lỗi khi nộp ảnh', false);
+        validateForm();
+      }
+    } catch (err) {
+      showStatus('Lỗi kết nối máy chủ', false);
+      validateForm();
+    }
+  });
+
+  // 5. Nút phụ: Gửi Admin
+  contactAdminBtn.addEventListener('click', () => {
+    adminModal.style.display = 'flex';
+  });
+
+  closeModalBtn.addEventListener('click', () => {
+    adminModal.style.display = 'none';
+  });
+
+  sendAdminSubmitBtn.addEventListener('click', async () => {
+    if (!currentStudent) return;
+    if (!compressedBlob) {
+      alert('Vui lòng chụp hoặc chọn ảnh chân dung trước khi gửi yêu cầu hỗ trợ.');
+      return;
+    }
+
+    sendAdminSubmitBtn.disabled = true;
+    const formData = new FormData();
+    formData.append('file', compressedBlob, 'support_photo.jpg');
+    formData.append('alias_id', currentStudent.alias_id);
+    formData.append('student_name', currentStudent.name);
+    formData.append('note', adminNote.value || '');
+
+    try {
+      const res = await fetch('/api/admin-requests', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        alert('Đã gửi yêu cầu hỗ trợ thành công tới Quản trị viên!');
+        adminModal.style.display = 'none';
+        adminNote.value = '';
+      } else {
+        alert(data.message || 'Không thể gửi yêu cầu hỗ trợ');
+      }
+    } catch (err) {
+      alert('Lỗi kết nối khi gửi yêu cầu hỗ trợ');
+    } finally {
+      sendAdminSubmitBtn.disabled = false;
+    }
+  });
+
+  loadStudents();
+</script>
+</body>
+</html>
