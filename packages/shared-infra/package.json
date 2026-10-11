@@ -14,6 +14,7 @@
   "files": ["dist"],
   "scripts": {
     "build": "tsc",
+    "seed:classes": "tsx src/seeds/seed-classes.ts",
     "test": "echo 'no tests yet' && exit 0",
     "clean": "rm -rf dist"
   },
@@ -24,6 +25,7 @@
   "devDependencies": {
     "@types/pg": "^8.11.0",
     "@types/node": "^22.0.0",
+    "tsx": "^4.16.0",
     "typescript": "^5.5.0"
   }
 }

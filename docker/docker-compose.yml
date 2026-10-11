@@ -20,16 +20,16 @@ services:
   # 1. NGINX REVERSE PROXY & STATIC SPA (RAM Limit: 128MB)
   # ----------------------------------------------------------------------------
   app_proxy:
-    image: nginx:alpine
+    build:
+      context: ..
+      dockerfile: docker/nginx/Dockerfile
     container_name: thanh_giuse_proxy
     restart: unless-stopped
     ports:
       - "80:80"
       - "8080:80"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ../frontend/dist:/usr/share/nginx/html:ro
+      - shared_images_volume:/app/storage/images:ro
       - shared_images_volume:/app/uploads:ro
     depends_on:
       - app_api
@@ -104,21 +104,30 @@ services:
   # 4. NODE.JS REST API SERVER (RAM Limit: 512MB)
   # ----------------------------------------------------------------------------
   app_api:
-    image: node:20-alpine
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    image: thanh_giuse_api:latest
     container_name: thanh_giuse_api
     restart: unless-stopped
     working_dir: /app
+    ports:
+      - "3000:3000"
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       NODE_OPTIONS: "--max-old-space-size=384"
       PORT: 3000
+      HOST: 0.0.0.0
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres_user:super_secure_postgres_password_change_me@app_postgres:5432/thanh_giuse_db}
       REDIS_URL: ${REDIS_URL:-redis://:super_secure_redis_password_change_me@app_redis:6379/0}
       UPLOAD_DIR: /app/uploads
       JWT_SECRET: ${JWT_SECRET:-super_secret_jwt_key_for_admin_session_change_me}
+      ADMIN_SECRET_TOKEN: ${ADMIN_SECRET_TOKEN:-admin_secret_super_secure_token}
+      HANET_API_BASE_URL: ${HANET_API_BASE_URL:-https://partner.hanet.ai}
+      HANET_ACCESS_TOKEN: ${HANET_ACCESS_TOKEN:-}
+      HANET_PLACE_ID: ${HANET_PLACE_ID:-998577}
     volumes:
       - shared_images_volume:/app/uploads
-    command: ["sh", "-c", "echo 'API Server container ready. Waiting for app code.' && sleep infinity"]
     depends_on:
       - app_postgres
       - app_redis
@@ -136,7 +145,10 @@ services:
   # 5. BULLMQ WORKER PROCESSOR (RAM Limit: 768MB, Concurrency: 1)
   # ----------------------------------------------------------------------------
   app_worker:
-    image: node:20-alpine
+    build:
+      context: ..
+      dockerfile: apps/worker/Dockerfile
+    image: thanh_giuse_worker:latest
     container_name: thanh_giuse_worker
     restart: unless-stopped
     stop_grace_period: 150s # Chờ worker hoàn thành request 120s trước khi shutdown
@@ -147,17 +159,19 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres_user:super_secure_postgres_password_change_me@app_postgres:5432/thanh_giuse_db}
       REDIS_URL: ${REDIS_URL:-redis://:super_secure_redis_password_change_me@app_redis:6379/0}
       UPLOAD_DIR: /app/uploads
-      HANET_API_BASE_URL: ${HANET_API_BASE_URL:-https://partner.hanet.ai}
+      HANET_API_BASE_URL: ${HANET_API_BASE_URL:-http://app_mock:4000}
+      HANET_MOCK_URL: http://app_mock:4000
+      STATIC_BASE_URL: http://app_proxy/tmp-faces
       HANET_CLIENT_ID: ${HANET_CLIENT_ID:-}
       HANET_CLIENT_SECRET: ${HANET_CLIENT_SECRET:-}
-      HANET_ACCESS_TOKEN: ${HANET_ACCESS_TOKEN:-}
-      HANET_PLACE_ID: ${HANET_PLACE_ID:-}
+      HANET_ACCESS_TOKEN: ${HANET_ACCESS_TOKEN:-mock_token}
+      HANET_PLACE_ID: ${HANET_PLACE_ID:-196}
     volumes:
       - shared_images_volume:/app/uploads
-    command: ["sh", "-c", "echo 'Queue Worker container ready. Waiting for worker code.' && sleep infinity"]
     depends_on:
       - app_postgres
       - app_redis
+      - app_mock
     networks:
       - thanh_giuse_net
     deploy:

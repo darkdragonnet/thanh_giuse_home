@@ -4,29 +4,50 @@ import {
   closeRedisClient,
   createDbPool,
   closeDbPool,
+  StudentRepository,
+  LogRepository,
+  SettingsRepository,
 } from '@thanh-giuse/shared-infra';
+import { HanetClient } from '@thanh-giuse/hanet-client';
 import type { RegistrationJobDataExtended } from '@thanh-giuse/shared-types';
 import { workerEnv } from './config.js';
+import { processRegistrationJob } from './processor.js';
 
 // ═══ Khởi tạo hạ tầng qua factory ═══
 const dbPool = createDbPool(workerEnv.db);
 const redisClient = createRedisClient(workerEnv.redis);
 
-console.log('[WORKER] Starting BullMQ consumer...');
+const studentRepo = new StudentRepository(dbPool);
+const logRepo = new LogRepository(dbPool);
+const settingsRepo = new SettingsRepository(dbPool);
+
+const hanetClient = new HanetClient({
+  baseUrl: workerEnv.hanet.baseUrl,
+  token: workerEnv.hanet.token,
+  placeId: workerEnv.hanet.placeId,
+  timeoutMs: workerEnv.hanet.timeoutMs,
+  circuitBreakerThreshold: workerEnv.hanet.circuitBreakerThreshold,
+  circuitBreakerCooldownMs: workerEnv.hanet.circuitBreakerCooldownMs,
+});
+
+console.log('[WORKER] Starting BullMQ consumer on registration_queue...');
+console.log(`[WORKER CONFIG] HANET Base URL: ${workerEnv.hanet.baseUrl} | Static Base: ${workerEnv.staticBaseUrl}`);
 
 // Concurrency = 1 BẤT BIẾN theo Hiến pháp dự án (chống OOM khi Sharp resize)
 export const registrationWorker = new Worker<RegistrationJobDataExtended>(
   'registration_queue',
   async (job: Job<RegistrationJobDataExtended>) => {
-    console.log(
-      `[JOB START] ID: ${job.id} | Action: ${job.data.actionType ?? 'REGISTER'} | Student: ${job.data.studentName} (${job.data.aliasId})`
-    );
-
-    // Placeholder — sẽ tích hợp Sharp + HANET client ở Phase tiếp theo
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    console.log(`[JOB DONE] ID: ${job.id}`);
-    return { success: true };
+    return processRegistrationJob(job, {
+      studentRepo,
+      logRepo,
+      settingsRepo,
+      redisClient,
+      hanetClient,
+      pauseWorker: async () => {
+        console.warn('[WORKER] Kích hoạt tạm dừng Worker (pause queue)!');
+        await registrationWorker.pause();
+      },
+    });
   },
   {
     connection: redisClient,
@@ -43,7 +64,7 @@ registrationWorker.on('failed', (job, err) => {
   console.error(`[BULLMQ FAILED] Job ${job?.id}: ${err.message}`);
 });
 
-// ═══ Graceful Shutdown ═══
+// ═══ Graceful Shutdown (stop_grace_period: 150s) ═══
 const shutdown = async (signal: string) => {
   console.log(`[WORKER] Received ${signal}, shutting down gracefully...`);
   try {

@@ -164,7 +164,7 @@ CREATE TABLE settings (
 #### Vòng đời Trạng thái:
 ```
 empty ---> [Nộp ảnh] ---> pending ---> [Worker HANET] ---> success (Nhận person_id, khóa)
-                                                     ---> error / manual_review (>=3 lần lỗi)
+                                                      ---> error / manual_review (>=3 lần lỗi)
 ```
 
 #### Quy tắc Khóa nguyên tử (Atomic Conditional Update):
@@ -212,9 +212,46 @@ RETURNING id, alias_id, person_id;
 
 ---
 
-## 7. QUY CHUẨN CI/CD & TRIỂN KHAI PRODUCTION
+## 7. KIẾN TRÚC GIAO TIẾP VỚI HANET CLOUD (HANET CLOUD INTEGRATION ARCHITECTURE)
 
-### 7.1. Pipeline GitHub Actions
+### 7.1. Bảng Ánh xạ Endpoint HANET Cloud trong Hệ thống
+
+| Tác vụ Nghiệp vụ | HANET Endpoint | Phương thức | Dữ liệu truyền tải & Lưu ý | Thành phần Thực thi |
+| :--- | :--- | :--- | :--- | :--- |
+| **Đăng ký Face ID mới** | `/person/registerByUrl` | `POST` (url-encoded) | Truyền URL ảnh từ Nginx `/tmp-faces/`, `aliasID`, `name`, `placeID`, `title`. | `app_worker` (BullMQ) |
+| **Cập nhật Face ID đã có** | `/person/updateByFaceImageByPersonID` | `POST` (multipart) | Buffer ảnh đã resize 1280x736, `personID`. | `app_worker` (Admin Job) |
+| **Đối soát & Lấy danh sách lớn (1.200+)** | `/person/getListByPlace` | `POST` (url-encoded) | `token`, `placeID`. Lấy toàn bộ bản ghi mà không bị giới hạn 50 người của `/department/list-person`. | Admin API / Sync Script |
+| **Cập nhật AliasID giữ nguyên Phòng ban** | `/person/updateAliasID` + `/department/add-person` | `POST` (2 bước) | Bước 1 đổi alias, bước 2 gán lại `departmentID` ngay lập tức để tránh lỗi detach (về 0). | Admin API / Sync Script |
+| **Xóa Face ID** | `/person/removePersonByID` | `POST` (url-encoded) | `token`, `personID`. | Admin API |
+
+### 7.2. Cơ chế Quản lý Token & Xử lý Mã Lỗi `-103` (Hiến pháp Điều 4)
+* **Token Tĩnh Dài Hạn:** Token được thiết lập qua biến môi trường `HANET_ACCESS_TOKEN` trong file `.env` trên VPS.
+* **Xử lý sự cố hết hạn token (`-103 ACCESS_TOKEN_EXPIRE`):**
+  1. Coi đây là **Sự cố Nghiêm trọng (Critical Incident)**.
+  2. Worker lập tức kích hoạt **Kill Switch**: Cập nhật `registration_enabled='false'` trong PostgreSQL và `setting:kill_switch="true"` trong Redis.
+  3. Tạm dừng hàng đợi (`queue.pause()`), dừng tiếp nhận xử lý job mới để tránh đánh trượt hàng loạt hồ sơ học sinh.
+  4. Ghi log `SYSTEM_TOKEN_EXPIRED` và gửi cảnh báo đỏ lên Admin Dashboard.
+  5. Quản trị viên cập nhật token mới vào `.env` trên VPS và kích hoạt lại:
+     ```bash
+     docker compose restart api-server queue-worker
+     ```
+
+### 7.3. Kiểm soát Tần suất & Bảo vệ Hạn ngạch (Rate Limiting)
+* HANET Cloud áp dụng hạn ngạch trần: **30 request/phút** (`X-Rate-Limit-Limit: 30`).
+* **Chiến lược Phòng thủ:**
+  - `app_worker` thực thi với `concurrency: 1`, mỗi request kéo dài từ 2 đến 5 giây, tần suất tối đa thực tế chỉ đạt ~12–20 req/phút $\rightarrow$ **Luôn nằm dưới ngưỡng trần an toàn của HANET**.
+  - Các script quét đồng bộ danh sách hàng loạt bắt buộc chèn khoảng nghỉ `delay(200)` (200ms) giữa các request.
+
+### 7.4. Phân Định Quyền Hạn Tương Tác HANET (Role Separation)
+* **Luồng Học sinh:** API tuyệt đối **không** gọi HANET trực tiếp. Nhận biên nhận 200 OK ngay sau khi hoàn tất Atomic Update DB và nạp job BullMQ. Trình duyệt học sinh nhận kết quả xử lý qua **HTTP Short Polling (3s/lần)** theo quyết định [ADR-004](knowledge/05-decisions/ADR-004-polling-over-websocket.md).
+* **Luồng Worker:** Độc quyền tương tác với HANET Cloud để tải và đồng bộ khuôn mặt học sinh.
+* **Luồng Admin Inspector:** Cho phép đọc danh sách trực tiếp qua `/person/getListByPlace` phục vụ đối soát trạng thái Cloud theo phiên làm việc có bảo vệ.
+
+---
+
+## 8. QUY CHUẨN CI/CD & TRIỂN KHAI PRODUCTION
+
+### 8.1. Pipeline GitHub Actions
 ```
 [ Developer Push 'main' ]
           │
@@ -240,7 +277,7 @@ RETURNING id, alias_id, person_id;
 
 ---
 
-## 8. SẴN SÀNG CHO GIAI ĐOẠN ROUTE & CONTROLLER (CHECKLIST)
+## 9. SẴN SÀNG CHO GIAI ĐOẠN ROUTE & CONTROLLER (CHECKLIST)
 
 Tài liệu này là tiền đề kỹ thuật trực tiếp để hiện thực hóa tầng logic ứng dụng:
 * [x] **Middleware 1:** `killSwitchGuard` (Kiểm tra bảng `settings`).
@@ -249,4 +286,6 @@ Tài liệu này là tiền đề kỹ thuật trực tiếp để hiện thực
 * [x] **Student Route:** `GET /classes/:code/students` (Lấy danh sách, gắn cờ disabled cho tên `pending`/`success`).
 * [x] **Registration Route:** `POST /students/:id/register` (Nhận file nén, Atomic Update, nạp BullMQ, trả về Fire-and-Forget receipt).
 * [x] **Admin Route:** `POST /admin/students/:id/override-photo` (Đẩy job priority = 1 cập nhật ảnh cho `person_id` có sẵn).
+* [x] **Admin Cloud Inspector:** `GET /admin/cloud-inspector` (Lấy dữ liệu đối soát trực tiếp từ `/person/getListByPlace`).
 * [x] **Worker Processor:** `registrationWorker.ts` (Sharp resize 1280x736, gọi HANET, bắt lỗi -503 và xử lý DLQ/manual_review).
+* [x] **Hanet Integration Specs:** [docs/hanet-endpoint.md](docs/hanet-endpoint.md) & [skills/hanet-preserve-department](skills/hanet-preserve-department/SKILL.md).

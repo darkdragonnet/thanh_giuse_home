@@ -11,10 +11,12 @@
     "dev:mock": "npm run dev --workspace=@thanh-giuse/hanet-mock",
     "dev:api": "npm run dev --workspace=@thanh-giuse/api",
     "dev:worker": "npm run dev --workspace=@thanh-giuse/worker",
+    "dev:admin": "npm run dev --workspace=@thanh-giuse/admin",
     "build": "npm run build:packages && npm run build:apps",
     "build:packages": "npm run build --workspace=@thanh-giuse/shared-types && npm run build --workspace=@thanh-giuse/shared-infra && npm run build --workspace=@thanh-giuse/hanet-client && npm run build --workspace=@thanh-giuse/error-mapping",
-    "build:apps": "npm run build --workspace=@thanh-giuse/api && npm run build --workspace=@thanh-giuse/worker && npm run build --workspace=@thanh-giuse/hanet-mock",
+    "build:apps": "npm run build --workspace=@thanh-giuse/api && npm run build --workspace=@thanh-giuse/worker && npm run build --workspace=@thanh-giuse/hanet-mock && npm run build --workspace=@thanh-giuse/admin",
     "build:mock": "npm run build --workspace=apps/hanet-mock",
+    "seed:classes": "npm run seed:classes --workspace=@thanh-giuse/shared-infra",
     "test": "npm run test --workspaces --if-present",
     "test:mock": "npm run test --workspace=apps/hanet-mock",
     "verify:mock": "cd apps/hanet-mock && bash tests/curl/verify.sh",
@@ -23,5 +25,13 @@
   "engines": {
     "node": ">=20.0.0",
     "npm": ">=10.0.0"
+  },
+  "devDependencies": {
+    "@types/form-data": "^2.2.1",
+    "@types/node-fetch": "^2.6.13",
+    "axios": "^1.20.0",
+    "form-data": "^4.0.6",
+    "node-fetch": "^3.3.2",
+    "vitest": "^4.1.11"
   }
 }

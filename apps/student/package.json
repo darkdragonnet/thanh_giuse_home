@@ -1,0 +1,15 @@
+{
+  "name": "@thanh-giuse/student",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@thanh-giuse/shared-types": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

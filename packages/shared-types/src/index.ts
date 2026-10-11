@@ -1,4 +1,26 @@
-export type StudentStatus = 'empty' | 'pending' | 'success' | 'error' | 'manual_review';
+export type StudentStatus =
+  | 'empty'
+  | 'pending'
+  | 'success'
+  | 'conflict_pending_review'
+  | 'failed_quota_exceeded'
+  | 'manual_review'
+  | 'error'
+  | 'synced';
+
+export interface SyncConflictEntity {
+  id: number;
+  student_id: number;
+  alias_id: string;
+  cloud_person_id?: string | null;
+  cloud_alias_id?: string | null;
+  cloud_name?: string | null;
+  cloud_face_url?: string | null;
+  conflict_type: string;
+  status: string;
+  created_at: Date;
+  updated_at: Date;
+}
 
 export interface ClassEntity {
   id: number;
@@ -8,6 +30,19 @@ export interface ClassEntity {
   token: string;
   is_locked: boolean;
   created_at: Date;
+}
+
+export interface CreateClassInput {
+  code: string;
+  name: string;
+  teacher_name?: string | null;
+  token?: string;
+}
+
+export interface CreateClassResponse {
+  success: boolean;
+  message?: string;
+  data?: ClassEntity;
 }
 
 export interface StudentEntity {
@@ -26,6 +61,18 @@ export interface StudentEntity {
   updated_at: Date;
 }
 
+export interface CreateStudentInput {
+  name: string;
+}
+
+export interface BulkCreateStudentsInput {
+  names: string[];
+}
+
+export interface UpdateStudentInput {
+  name: string;
+}
+
 export interface RegistrationJobData {
   studentId: number;
   aliasId: string;
@@ -33,6 +80,7 @@ export interface RegistrationJobData {
   classCode: string;
   tempFilename: string;
   uploadedAt: number;
+  faceImageUrl?: string;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -149,3 +197,36 @@ export interface RegistrationJobDataExtended extends RegistrationJobData {
   actionType?: JobActionType;
   personId?: string;
 }
+
+// ══════════════════════════════════════════════════════════════
+// ADMIN REQUESTS
+// ══════════════════════════════════════════════════════════════
+export * from './types/admin-request.js';
+export * from './types/student.js';
+
+// ══════════════════════════════════════════════════════════════
+// CATECHISM & PARISH UNITS CONSTANTS
+// ══════════════════════════════════════════════════════════════
+export const CATECHISM_GROUPS = [
+  { code: 'KT', name: 'Khai Tâm' },
+  { code: 'RL', name: 'Rước Lễ' },
+  { code: 'TS', name: 'Thêm Sức' },
+  { code: 'BD', name: 'Bao Đồng' },
+  { code: 'VD', name: 'Vào Đời' },
+] as const;
+
+export const SPECIAL_UNITS = [
+  { code: 'GLV', name: 'Ban Giáo Lý Viên' },
+  { code: 'LS', name: 'Ban Lễ Sinh' },
+  { code: 'CD', name: 'Ca Đoàn Cecilia' },
+  { code: 'TRE', name: 'Giới Trẻ Giáo Xứ' },
+  { code: 'GT', name: 'Giới Gia Trưởng' },
+  { code: 'HM', name: 'Giới Hiền Mẫu' },
+  { code: 'HDMV', name: 'Hội Đồng Mục Vụ' },
+] as const;
+
+// ══════════════════════════════════════════════════════════════
+// HANET CLOUD FACE PARSER & CLASSIFIER
+// ══════════════════════════════════════════════════════════════
+export * from './hanet-cloud.js';
+

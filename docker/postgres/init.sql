@@ -4,46 +4,76 @@
 -- ==============================================================================
 
 -- 1. Định nghĩa kiểu ENUM trạng thái học sinh
-CREATE TYPE student_status AS ENUM (
-    'empty',            -- Chưa nộp ảnh
-    'pending',          -- Đã nộp ảnh, đang trong hàng đợi BullMQ chờ HANET xử lý
-    'success',          -- Đã đăng ký thành công trên HANET Cloud (đã có person_id)
-    'error',            -- Lỗi tạm thời (chờ retry)
-    'manual_review'     -- Lỗi ảnh/mặt không đạt chuẩn hoặc retry >= 3 (cần admin xử lý thủ công)
-);
+DO $$ 
+BEGIN 
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'student_status') THEN
+    CREATE TYPE student_status AS ENUM (
+      'empty',
+      'pending',
+      'success',
+      'conflict_pending_review',
+      'failed_quota_exceeded',
+      'manual_review',
+      'error',
+      'synced'
+    );
+  ELSE
+    ALTER TYPE student_status ADD VALUE IF NOT EXISTS 'manual_review';
+    ALTER TYPE student_status ADD VALUE IF NOT EXISTS 'conflict_pending_review';
+    ALTER TYPE student_status ADD VALUE IF NOT EXISTS 'failed_quota_exceeded';
+    ALTER TYPE student_status ADD VALUE IF NOT EXISTS 'synced';
+  END IF;
+END $$;
 
 -- 2. Bảng Lớp học (classes)
-CREATE TABLE classes (
+CREATE TABLE IF NOT EXISTS classes (
     id SERIAL PRIMARY KEY,
-    code VARCHAR(50) UNIQUE NOT NULL,           -- Mã lớp (VD: '10A1', '10A2')
-    name VARCHAR(100) NOT NULL,                 -- Tên hiển thị (VD: 'Lớp 10A1')
+    code VARCHAR(50) UNIQUE NOT NULL,           -- Mã lớp (VD: 'GLV', 'TS1A')
+    name VARCHAR(255) NOT NULL,                 -- Tên hiển thị
+    department_code VARCHAR(20) DEFAULT '',     -- Mã phòng ban
     teacher_name VARCHAR(100),                  -- Tên Giáo viên chủ nhiệm
-    token VARCHAR(64) NOT NULL,                 -- Mã PIN giáo viên dùng để Bypass Rate Limit
+    token VARCHAR(100) NOT NULL,                -- Mã PIN giáo viên dùng để Bypass Rate Limit
     is_locked BOOLEAN DEFAULT FALSE,            -- Cờ khóa lớp khi đã hoàn thành hoặc có sự cố
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- 3. Bảng Học sinh (students)
-CREATE TABLE students (
+CREATE TABLE IF NOT EXISTS students (
     id SERIAL PRIMARY KEY,
-    class_id INT REFERENCES classes(id) ON DELETE CASCADE,
-    name VARCHAR(100) NOT NULL,                 -- Họ và tên học sinh
-    alias_id VARCHAR(64) UNIQUE NOT NULL,       -- Mã định danh duy nhất ngẫu nhiên (UUID/NanoID)
+    class_id INT REFERENCES classes(id) ON DELETE SET NULL, -- Cho phép NULL khi chưa map được prefix
+    name VARCHAR(255) NOT NULL,                 -- Họ và tên học sinh
+    alias_id VARCHAR(100) UNIQUE NOT NULL,      -- Mã định danh duy nhất ngẫu nhiên
     status student_status DEFAULT 'empty',      -- Trạng thái máy trạng thái
-    person_id VARCHAR(100),                     -- ID khuôn mặt do HANET Cloud cấp (Source of Truth)
+    person_id VARCHAR(100) UNIQUE,              -- ID khuôn mặt do HANET Cloud cấp (Source of Truth)
     face_url TEXT,                              -- Đường dẫn ảnh trên CDN của HANET
     local_image_path TEXT,                      -- Đường dẫn ảnh tạm trên Docker Shared Volume
-    last_error_code VARCHAR(50),                -- Mã lỗi gần nhất (VD: '-503', 'FACE_NOT_FOUND')
-    last_error_message TEXT,                    -- Chi tiết thông báo lỗi từ worker hoặc HANET
+    last_error_code VARCHAR(50) DEFAULT NULL,   -- Mã lỗi gần nhất (VD: '-503', '-9008')
+    last_error_message TEXT DEFAULT NULL,       -- Chi tiết thông báo lỗi từ worker hoặc HANET
     retry_count INT DEFAULT 0,                  -- Số lần đã thử lại
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Bảng đối soát xung đột đồng bộ (sync_conflicts)
+CREATE TABLE IF NOT EXISTS sync_conflicts (
+    id SERIAL PRIMARY KEY,
+    alias_id VARCHAR(100) NOT NULL,
+    cloud_person_id VARCHAR(100),
+    cloud_alias_id VARCHAR(100),
+    cloud_name VARCHAR(255),
+    cloud_face_url TEXT,
+    conflict_type VARCHAR(50) NOT NULL,         -- 'UNMAPPED_CLASS_PREFIX', 'DUPLICATE_FACE', etc.
+    status VARCHAR(50) DEFAULT 'pending_review',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    resolved_at TIMESTAMP WITH TIME ZONE
+);
+
 -- Tạo Index tối ưu hóa truy vấn thường xuyên
-CREATE INDEX idx_students_class_id ON students(class_id);
-CREATE INDEX idx_students_status ON students(status);
-CREATE INDEX idx_students_alias_id ON students(alias_id);
+CREATE INDEX IF NOT EXISTS idx_students_class_id ON students(class_id);
+CREATE INDEX IF NOT EXISTS idx_students_status ON students(status);
+CREATE INDEX IF NOT EXISTS idx_students_alias_id ON students(alias_id);
+CREATE INDEX IF NOT EXISTS idx_sync_conflicts_alias ON sync_conflicts(alias_id);
 
 -- 4. Bảng Nhật ký hoạt động (logs)
 CREATE TABLE logs (
@@ -60,7 +90,31 @@ CREATE TABLE logs (
 CREATE INDEX idx_logs_alias_id ON logs(alias_id);
 CREATE INDEX idx_logs_created_at ON logs(created_at DESC);
 
--- 5. Bảng Cấu hình hệ thống (settings - Chốt chặn khẩn cấp Kill Switch)
+-- 5. Bảng Yêu cầu hỗ trợ Admin (admin_requests)
+DO $$ 
+BEGIN 
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'admin_request_status') THEN
+    CREATE TYPE admin_request_status AS ENUM ('new', 'processing', 'done');
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS admin_requests (
+    id SERIAL PRIMARY KEY,
+    alias_id VARCHAR(64) NOT NULL,
+    class_id INT REFERENCES classes(id) ON DELETE CASCADE,
+    student_name VARCHAR(100),
+    image_path TEXT NOT NULL,
+    note TEXT,
+    status admin_request_status DEFAULT 'new',
+    ip VARCHAR(45),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_requests_status ON admin_requests(status);
+CREATE INDEX IF NOT EXISTS idx_admin_requests_alias ON admin_requests(alias_id);
+
+-- 6. Bảng Cấu hình hệ thống (settings - Chốt chặn khẩn cấp Kill Switch)
 CREATE TABLE settings (
     key VARCHAR(50) PRIMARY KEY,
     value TEXT NOT NULL
@@ -88,3 +142,7 @@ INSERT INTO students (class_id, name, alias_id, status) VALUES
     (1, 'Lê Thị Thu Thảo', 'STU_10A1_003_G8H9J', 'empty'),
     (2, 'Phạm Đức Trọng', 'STU_10A2_001_K1L2M', 'empty'),
     (2, 'Vũ Mai Phương', 'STU_10A2_002_N3P4Q', 'empty');
+
+SELECT setval('classes_id_seq', COALESCE((SELECT MAX(id) FROM classes), 1));
+SELECT setval('students_id_seq', COALESCE((SELECT MAX(id) FROM students), 1));
+

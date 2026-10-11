@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { mockState, MockPerson } from '../state.js';
 import { resolveScenario } from '../scenarioResolver.js';
+import { generate108MockFaces } from '../data/mock-faces.js';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -328,14 +329,11 @@ export async function registerHanetRoutes(server: FastifyInstance): Promise<void
     const intercepted = await handleScenario(request);
     if (intercepted) return reply.status(200).send(intercepted);
 
-    const snapshot = mockState.getSnapshot();
+    const faces = generate108MockFaces();
     return reply.status(200).send({
       returnCode: 1,
       returnMessage: 'SUCCESS',
-      data: {
-        total: snapshot.totalPersons,
-        list: []
-      }
+      data: faces
     });
   });
 

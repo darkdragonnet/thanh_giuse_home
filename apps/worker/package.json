@@ -12,12 +12,14 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@thanh-giuse/error-mapping": "*",
+    "@thanh-giuse/hanet-client": "*",
+    "@thanh-giuse/shared-infra": "*",
+    "@thanh-giuse/shared-types": "*",
     "bullmq": "^5.12.0",
     "dotenv": "^16.4.0",
-    "@thanh-giuse/shared-types": "*",
-    "@thanh-giuse/shared-infra": "*",
-    "@thanh-giuse/hanet-client": "*",
-    "@thanh-giuse/error-mapping": "*"
+    "ioredis": "^5.4.0",
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

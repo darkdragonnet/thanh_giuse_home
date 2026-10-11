@@ -20,3 +20,4 @@ Tổng bộ nhớ RAM của toàn bộ 5 container không được vượt quá 
 * **API KHÔNG BAO GIỜ gọi HANET trực tiếp:** API chỉ nhận ảnh, kiểm tra mã PIN/Rate Limit, thực hiện Atomic Update trạng thái `pending`, ghi nhận Job vào Redis BullMQ và phản hồi HTTP 200 (Biên nhận Asynchronous) trong vòng dưới 50ms.
 * **Worker là nơi duy nhất tương tác với HANET Cloud:** Xử lý tuần tự từng job, resize chuẩn 1280x736, gọi HANET và cập nhật kết quả cuối cùng.
 * **Tự động dọn dẹp file ảnh tạm:** File ảnh tạm trong volume sau khi nạp thành công lên HANET CDN phải được giải phóng định kỳ.
+* **Bảo toàn phòng ban khi đổi AliasID:** Khi cập nhật `aliasID` trên HANET Cloud, BẮT BUỘC áp dụng quy trình 2 bước an toàn (`POST /person/updateAliasID` kết hợp `POST /department/add-person`) hoặc nguyên khối (`POST /person/updateInfo` kèm `departmentID`) để bảo toàn chỉ mục phòng ban, tránh lỗi bị detach hoặc reset về 0 (tham khảo skill `hanet-preserve-department`).

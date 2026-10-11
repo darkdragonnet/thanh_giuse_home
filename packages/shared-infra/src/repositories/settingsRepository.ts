@@ -8,6 +8,10 @@ export class SettingsRepository {
     return res.rows[0]?.value || null;
   }
 
+  public async get(key: string): Promise<string | null> {
+    return this.getSetting(key);
+  }
+
   public async isRegistrationEnabled(): Promise<boolean> {
     const value = await this.getSetting('registration_enabled');
     // Mặc định là true nếu chưa cấu hình
@@ -21,5 +25,18 @@ export class SettingsRepository {
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
     `;
     await this.db.query(query, [String(enabled)]);
+  }
+
+  public async setSetting(key: string, value: string): Promise<void> {
+    const query = `
+      INSERT INTO settings (key, value) 
+      VALUES ($1, $2)
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+    `;
+    await this.db.query(query, [key, value]);
+  }
+
+  public async set(key: string, value: string): Promise<void> {
+    return this.setSetting(key, value);
   }
 }
