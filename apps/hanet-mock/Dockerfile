@@ -10,7 +10,7 @@ COPY apps/hanet-mock/ ./apps/hanet-mock/
 
 # Cài đặt toàn bộ dependencies và build riêng workspace hanet-mock
 RUN npm ci
-RUN npm run build --workspace=@thanh-giuse/hanet-mock
+RUN npm run build --workspace=@thanh-giuse/shared-types && npm run build --workspace=@thanh-giuse/hanet-mock
 
 # Prune devDependencies chỉ giữ lại production packages
 RUN npm prune --production
