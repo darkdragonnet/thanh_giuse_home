@@ -195,14 +195,15 @@ export async function handleUpdateAlias(
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // BƯỚC 4: CẬP NHẬT DATABASE VÀ GHI AUDIT LOG
+  // BƯỚC 4: CẬP NHẬT DATABASE VÀ GHI AUDIT LOG (BẢO TOÀN DỮ LIỆU ĐỂ ROLLBACK NẾU CẦN)
   // ═══════════════════════════════════════════════════════════════════════════
   await studentRepo.updateAliasSuccess(studentId, newAlias);
   await logRepo.recordLog({
     alias_id: newAlias,
+    class_id: typeof job.data.classId === 'number' ? job.data.classId : null,
     action: 'SYNC_ALIAS',
     result_code: 'SUCCESS',
-    result_message: `Đổi aliasID thành công từ ${aliasId} sang ${newAlias} (personID: ${personId}, department: ${departmentId})`,
+    result_message: `Đổi aliasID thành công: [OLD_ALIAS: ${aliasId}] -> [NEW_ALIAS: ${newAlias}] | student_id: ${studentId} | personID: ${personId} | department: ${departmentId}`,
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -219,6 +220,13 @@ export async function handleUpdateAlias(
       await redisClient.hset(batchKey, 'is_done', '1');
     }
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // BƯỚC 6: COOLDOWN NGHỈ GIỮA CÁC JOB LIÊN TIẾP (BẢO VỆ RATE LIMIT 30 REQ/PHÚT CỦA HANET)
+  // Với 2 requests/job, nghỉ 3.000ms đảm bảo tần suất toàn hệ thống luôn <= 20-25 req/phút
+  // ═══════════════════════════════════════════════════════════════════════════
+  const cooldownMs = process.env.NODE_ENV === 'test' ? 10 : 3000;
+  await new Promise((resolve) => setTimeout(resolve, cooldownMs));
 
   console.log(`[UPDATE_ALIAS SUCCESS] Hoàn tất đồng bộ học sinh ${studentName} (${newAlias})!`);
   return { success: true, personId, aliasId: newAlias };

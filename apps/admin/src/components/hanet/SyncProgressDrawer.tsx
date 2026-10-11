@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { apiClient } from '../../api/client';
 import { X, CheckCircle2, AlertCircle, Loader2, ArrowRight } from 'lucide-react';
 
@@ -27,44 +27,61 @@ export const SyncProgressDrawer: React.FC<SyncProgressDrawerProps> = ({
 }) => {
   const [status, setStatus] = useState<SyncBatchStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const fetchStatus = useCallback(async () => {
-    if (!batchId) return;
-    try {
-      const res = await apiClient.get<{ success: boolean; data: SyncBatchStatus }>(
-        `/sync-batches/${batchId}/status`
-      );
-      if (res.success && res.data) {
-        setStatus(res.data);
-        if (res.data.isDone && onCompleted) {
-          onCompleted();
-        }
-      }
-    } catch (err: any) {
-      setError(err.message || 'Không thể lấy thông tin tiến độ');
-    }
-  }, [batchId, onCompleted]);
+  const hasTriggeredCompletedRef = React.useRef(false);
 
   useEffect(() => {
     if (!isOpen || !batchId) {
       setStatus(null);
       setError(null);
+      hasTriggeredCompletedRef.current = false;
       return;
     }
+
+    let intervalId: any = null;
+
+    const fetchStatus = async () => {
+      try {
+        const res = await apiClient.get<{ success: boolean; data: SyncBatchStatus }>(
+          `/sync-batches/${batchId}/status`
+        );
+        if (res.success && res.data) {
+          setStatus(res.data);
+          const isFinished = res.data.isDone || (res.data.total > 0 && res.data.processed >= res.data.total);
+          if (isFinished) {
+            if (intervalId) {
+              clearInterval(intervalId);
+              intervalId = null;
+            }
+            if (!hasTriggeredCompletedRef.current) {
+              hasTriggeredCompletedRef.current = true;
+              if (onCompleted) {
+                onCompleted();
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        setError(err.message || 'Không thể lấy thông tin tiến độ');
+      }
+    };
 
     // Polling ban đầu ngay khi mở
     fetchStatus();
 
     // Short Polling chu kỳ 3.000 ms (ADR-004)
-    const interval = setInterval(() => {
+    intervalId = setInterval(() => {
       // Chỉ poll khi tab đang hiển thị
       if (document.visibilityState === 'visible') {
         fetchStatus();
       }
     }, 3000);
 
-    return () => clearInterval(interval);
-  }, [isOpen, batchId, fetchStatus]);
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [isOpen, batchId, onCompleted]);
 
   if (!isOpen) return null;
 

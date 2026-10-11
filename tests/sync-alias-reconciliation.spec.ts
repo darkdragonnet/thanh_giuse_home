@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { HanetClient } from '../packages/hanet-client/src/index.js';
 import { handleUpdateAlias } from '../apps/worker/src/processors/update-alias.processor.js';
+import { parseAndClassifyAlias } from '../packages/shared-types/src/index.js';
 
 describe('Kiểm thử Hệ thống Đối Soát & Đồng Bộ AliasID (Phase 4 Verification)', () => {
   // =========================================================================
@@ -225,4 +226,66 @@ describe('Kiểm thử Hệ thống Đối Soát & Đồng Bộ AliasID (Phase 4
       expect(mockStudentRepo.updateAliasSuccess).toHaveBeenCalledWith(103, 'TS1A_0003');
     });
   });
+
+  // =========================================================================
+  // TEST CASE 7: BÓC TÁCH VÀ CHUẨN HÓA DỮ LIỆU CLOUD HANET THỰC TẾ VỀ 9 KÝ TỰ
+  // =========================================================================
+  describe('Bóc tách & Chuẩn hóa Alias Cloud Thực Tế về 9 Ký Tự', () => {
+    it('Phải chuẩn hóa mã Giáo Lý Viên 2 phần (GLV_FK2S -> GLV0_FK2S)', () => {
+      const res = parseAndClassifyAlias({
+        personID: '12345',
+        name: 'LUCIA Lê Thanh Minh Phương',
+        aliasID: 'GLV_FK2S',
+        avatar: 'https://vcdn-static.hanet.ai/face/employee/998577/avatar.jpg',
+      });
+
+      expect(res.isError).toBe(false);
+      expect(res.partsCount).toBe(2);
+      expect(res.nhom1_nganh).toBe('TN');
+      expect(res.maLopChuanHoa).toBe('GLV0');
+      expect(res.aliasChuanHoaDuKien).toBe('GLV0_FK2S');
+      expect(res.aliasChuanHoaDuKien).toHaveLength(9);
+    });
+
+    it('Phải chuẩn hóa mã Thiếu Nhi 3 phần legacy (TN_XUNGTOI2A_4BDI -> RL2A_4BDI)', () => {
+      const res = parseAndClassifyAlias({
+        personID: '67890',
+        name: 'EMMANUEL Nguyễn Văn Nam',
+        aliasID: 'TN_XUNGTOI2A_4BDI',
+        avatar: 'https://vcdn-static.hanet.ai/face/employee/998577/avatar.jpg',
+      });
+
+      expect(res.isError).toBe(false);
+      expect(res.partsCount).toBe(3);
+      expect(res.nhom1_nganh).toBe('TN');
+      expect(res.maLopChuanHoa).toBe('RL2A');
+      expect(res.aliasChuanHoaDuKien).toBe('RL2A_4BDI');
+      expect(res.aliasChuanHoaDuKien).toHaveLength(9);
+    });
+
+    it('Phải giữ nguyên mã đã đúng chuẩn 9 ký tự (TS1A_0001 -> TS1A_0001)', () => {
+      const res = parseAndClassifyAlias({
+        personID: '11111',
+        name: 'MARIA Trần Thị Hà',
+        aliasID: 'TS1A_0001',
+      });
+
+      expect(res.isError).toBe(false);
+      expect(res.maLopChuanHoa).toBe('TS1A');
+      expect(res.aliasChuanHoaDuKien).toBe('TS1A_0001');
+      expect(res.aliasChuanHoaDuKien).toHaveLength(9);
+    });
+
+    it('Phải bắt lỗi nếu alias trống', () => {
+      const res = parseAndClassifyAlias({
+        personID: '99999',
+        name: 'Vô Danh',
+        aliasID: '',
+      });
+
+      expect(res.isError).toBe(true);
+      expect(res.errorCode).toBe('ERR_EMPTY_ALIAS');
+    });
+  });
 });
+

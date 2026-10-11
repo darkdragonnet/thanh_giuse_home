@@ -552,12 +552,15 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       primaryUrl: string,
       _log?: any
     ): Promise<{ rawList: RawCloudFace[]; connectedBaseUrl: string; isLiveCloud: boolean }> {
-      const candidateUrls = [
-        primaryUrl,
-        'http://app_mock:4000',
-        'http://localhost:8001',
-        'http://127.0.0.1:4000',
-      ].filter(Boolean) as string[];
+      const isCloudPrimary = primaryUrl.includes('partner.hanet.ai');
+      const candidateUrls = isCloudPrimary
+        ? [primaryUrl]
+        : ([
+            primaryUrl,
+            'http://app_mock:4000',
+            'http://localhost:8001',
+            'http://127.0.0.1:4000',
+          ].filter(Boolean) as string[]);
 
       let connectedBaseUrl = primaryUrl;
       let lastFetchError: any = null;
@@ -567,7 +570,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         try {
           let page = 1;
           const size = 50;
-          const maxPages = 5; // Chốt an toàn 1: Tối đa 5 trang (250 người)
+          const maxPages = isCloudPrimary ? 35 : 5; // Tối đa 35 trang (1.750 người) cho Cloud thật
           const collected: RawCloudFace[] = [];
           let prevFirstPersonID: string | null = null;
           let encounteredError = false;
@@ -686,7 +689,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         if (item.nhom1_nganh === 'LG') lgCount++;
         if (item.nhom1_nganh === 'LM') lmCount++;
 
-        const key = item.nhom2_lop!.toLowerCase();
+        const key = (item.maLopChuanHoa || item.nhom2_lop || 'OTHER').toLowerCase();
         if (!summaryByGroup[key]) {
           summaryByGroup[key] = {
             count: 0,
@@ -749,9 +752,9 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         const { rawList, isLiveCloud } = await fetchAllRawCloudFaces(token, placeID, primaryUrl, request.log);
         const responsePayload = processCloudFaces(rawList, placeID, isLiveCloud);
 
-        // Lưu Cache 60s
+        // Lưu Cache 1800s (30 phút) để bảo vệ hạn ngạch và băng thông
         try {
-          await redis.set(cacheKey, JSON.stringify(responsePayload), 'EX', 60);
+          await redis.set(cacheKey, JSON.stringify(responsePayload), 'EX', 1800);
         } catch (err) {
           request.log.warn({ err }, 'Redis cache set failed');
         }
@@ -1109,12 +1112,12 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         const { rawList, isLiveCloud } = await fetchAllRawCloudFaces(token, placeID, primaryUrl, request.log);
         const responsePayload = processCloudFaces(rawList, placeID, isLiveCloud);
 
-        // Lưu Cache 600s (10 phút)
-        await redis.set(cacheKey, JSON.stringify(responsePayload), 'EX', 600);
+        // Lưu Cache 1800s (30 phút)
+        await redis.set(cacheKey, JSON.stringify(responsePayload), 'EX', 1800);
 
         return reply.send({
           success: true,
-          message: `Đã tải và cache ${responsePayload.total} khuôn mặt từ Cloud (TTL 10 phút)`,
+          message: `Đã tải và cache ${responsePayload.total} khuôn mặt từ Cloud (TTL 30 phút)`,
           data: {
             totalFaces: responsePayload.total,
             validCount: responsePayload.validCount,

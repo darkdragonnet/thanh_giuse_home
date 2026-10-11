@@ -9,7 +9,9 @@ let redisUrl = process.env.REDIS_URL || 'redis://:super_secure_redis_password_ch
 
 // Trong môi trường dev hoặc test ngoài docker, ưu tiên Mock Server localhost:4000
 // trừ khi có cờ tường minh HANET_USE_REAL_CLOUD=true
-const useRealCloud = process.env.HANET_USE_REAL_CLOUD === 'true';
+const useRealCloud =
+  process.env.HANET_USE_REAL_CLOUD === 'true' ||
+  Boolean(process.env.HANET_API_BASE_URL && process.env.HANET_API_BASE_URL.includes('partner.hanet.ai'));
 let hanetBaseUrl = useRealCloud
   ? (process.env.HANET_API_BASE_URL || 'https://partner.hanet.ai')
   : (process.env.HANET_MOCK_URL || 'http://localhost:4000');
