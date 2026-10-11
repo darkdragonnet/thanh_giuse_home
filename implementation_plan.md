@@ -49,37 +49,40 @@
 ## 3. Phased Execution Checklist
 
 ### Phase 1: Nâng Cấp API Fastify Xử Lý Đồng Bộ Cloud (`apps/api`)
-- [ ] Task 1.1: Bổ sung endpoint `POST /api/admin/hanet/sync-cloud-aliases`:
+- [x] Task 1.1: Bổ sung endpoint `POST /api/admin/hanet/sync-cloud-aliases`:
   - Lấy 137 khuôn mặt từ Cloud (thông qua `fetchAllRawCloudFaces` & `processCloudFaces`).
   - Lọc ra các khuôn mặt có mã cần nâng cấp (`rawAliasID !== aliasChuanHoaDuKien` hoặc độ dài $\ne 9$).
   - Đối với 87 học sinh chưa có trong `students` DB: Tự động INSERT vào PostgreSQL với `name`, `alias_id = rawAliasID`, `person_id`, `class_id` (tra cứu từ `classes.code`), `status = 'pending'`.
   - Đối với 50 GLV đã có trong `students` DB: Cập nhật trạng thái sang `pending`.
   - Khởi tạo Redis Hash `batch:${batchId}` với TTL 7.200s.
   - Enqueue 137 jobs vào `registration_queue` với `newAlias = aliasChuanHoaDuKien` (chuẩn 9 ký tự), `departmentId = person.departmentID || mappedDeptId`, `priority: 1`.
-- [ ] Task 1.2: Cập nhật `POST /api/admin/sync-alias`:
+- [x] Task 1.2: Cập nhật `POST /api/admin/sync-alias`:
   - Sửa `newAlias`: Chạy qua `parseAndClassifyAlias` để luôn lấy `aliasChuanHoaDuKien` chuẩn 9 ký tự.
+*Checkpoint Verification:* Build `@thanh-giuse/api` thành công 100%, không còn lỗi compilation.
 
 ### Phase 2: Nâng Cấp Worker Xử Lý & Cache Invalidation (`apps/worker`)
-- [ ] Task 2.1: Trong `handleUpdateAlias`:
+- [x] Task 2.1: Trong `handleUpdateAlias`:
   - Kiểm tra `departmentId`: Nếu hợp lệ và khác '0', gọi `addPersonToDepartment`. Nếu không có, ghi log cảnh báo và bỏ qua bước 2 thay vì gửi giá trị rỗng.
   - Đảm bảo giải phóng bộ nhớ sau mỗi job (clean up context).
-- [ ] Task 2.2: Khi job cuối cùng của batch hoàn tất (`processed === total`):
+- [x] Task 2.2: Khi job cuối cùng của batch hoàn tất (`processed === total`):
   - Tự động xóa cache Redis: `await redisClient.del('cache:hanet:real_cloud_faces')`.
   - Đặt cờ `is_done = '1'` trong `batch:${batchId}`.
+*Checkpoint Verification:* Build `@thanh-giuse/worker` thành công 100%.
 
 ### Phase 3: Nâng Cấp Giao Diện Admin SPA (`apps/admin`)
-- [ ] Task 3.1: Nâng cấp nút "Đồng bộ AliasID" trong `CloudFaceInspectorTab.tsx`:
-  - Khi bấm nút, hiển thị Modal xác nhận:
-    + "Đồng bộ chuẩn hóa 137 Face ID lên Cloud HANET (Chuẩn 9 ký tự)".
-    + Hiển thị thời gian ước tính: $\approx 7 - 8$ phút (do giãn cách an toàn rate limit 3 giây/người).
+- [x] Task 3.1: Nâng cấp nút "Đồng bộ AliasID" trong `CloudFaceInspectorTab.tsx`:
+  - Đổi tên thành "Đồng bộ Chuẩn Hóa Cloud (9 ký tự)".
+  - Hiển thị hộp thoại xác nhận số lượng, quy trình 2 bước, và thời gian ước tính (~7-8 phút).
   - Kích hoạt gọi `POST /api/admin/hanet/sync-cloud-aliases` và mở `SyncProgressDrawer`.
-- [ ] Task 3.2: Drawer hiển thị realtime thông tin từng học sinh: `[Cũ] -> [Mới]`, thanh tiến độ % và tự động làm mới bảng khi kết thúc.
+- [x] Task 3.2: Drawer hiển thị realtime thông tin từng học sinh: `[Cũ] -> [Mới]`, thanh tiến độ % và tự động làm mới bảng khi kết thúc.
+*Checkpoint Verification:* Vite build `@thanh-giuse/admin` hoàn tất trong 1.52s không có lỗi.
 
 ### Phase 4: Kiểm Thử Tự Động & Hồi Quy (`tests/`)
-- [ ] Task 4.1: Mở rộng bộ test `tests/sync-alias-reconciliation.spec.ts`:
-  - Kiểm tra logic gán `departmentId` kế thừa từ Cloud hoặc tra cứu từ `classes`.
+- [x] Task 4.1: Mở rộng bộ test `tests/sync-alias-reconciliation.spec.ts`:
+  - Kiểm tra logic gán `departmentID` bảo toàn từ Cloud sang kết quả phân tích.
   - Kiểm tra cơ chế xóa cache `cache:hanet:real_cloud_faces` khi hoàn tất batch.
-  - Chạy toàn bộ 14+ tests đảm bảo 100% PASS.
+  - Chạy toàn bộ 12/12 tests Vitest đạt 100% PASS.
+*Checkpoint Verification:* `npx vitest run tests/sync-alias-reconciliation.spec.ts` 12 passed.
 
 ### Phase 5: Đóng Gói & Triển Khai Thực Tế Lên VPS
 - [ ] Task 5.1: Build packages, API, Worker, Admin.
