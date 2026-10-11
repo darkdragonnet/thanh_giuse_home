@@ -40,3 +40,13 @@ export interface ConnectionStatusResult {
   deviceID: string;
   status: 0 | 1; // 0: Offline, 1: Online
 }
+
+export interface UpdateAliasIDParams {
+  personID: string;
+  aliasID: string;
+}
+
+export interface AddPersonToDepartmentParams {
+  personID: string;
+  departmentID: string | number;
+}

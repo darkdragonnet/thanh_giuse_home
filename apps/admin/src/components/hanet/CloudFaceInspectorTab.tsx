@@ -22,6 +22,8 @@ import {
   Database,
   ShieldAlert,
 } from 'lucide-react';
+import { SyncProgressDrawer } from './SyncProgressDrawer';
+import { ManualReviewModal, ConflictItem } from './ManualReviewModal';
 
 const ERROR_BADGE_MAP: Record<CloudErrorCode, { label: string; color: string }> = {
   ERR_EMPTY_ALIAS: { label: 'Trống mã', color: 'bg-rose-100 text-rose-800 border-rose-300' },
@@ -44,6 +46,11 @@ export const CloudFaceInspectorTab: React.FC = () => {
   const [driftData, setDriftData] = useState<DataDriftReport | null>(null);
   const [driftLoading, setDriftLoading] = useState(false);
   const [showDriftModal, setShowDriftModal] = useState(false);
+  const [batchId, setBatchId] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [reconcileLoading, setReconcileLoading] = useState(false);
+  const [manualReviewOpen, setManualReviewOpen] = useState(false);
+  const [conflictsList, setConflictsList] = useState<ConflictItem[]>([]);
 
   const fetchDriftData = async () => {
     setDriftLoading(true);
@@ -79,6 +86,59 @@ export const CloudFaceInspectorTab: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleReconcileCloud = async () => {
+    setReconcileLoading(true);
+    try {
+      const res = await apiClient.post<{ success: boolean; message: string }>('/reconcile-cloud');
+      if (res.success) {
+        alert(res.message);
+        fetchData(true);
+      }
+    } catch (err: any) {
+      alert(`Lỗi đối soát Cloud: ${err.message || 'Không thể kết nối'}`);
+    } finally {
+      setReconcileLoading(false);
+    }
+  };
+
+  const handleSyncClass = async (classId?: number) => {
+    try {
+      const res = await apiClient.post<{
+        success: boolean;
+        batchId: string;
+        queuedCount: number;
+        message: string;
+      }>('/sync-alias', classId ? { class_id: classId } : {});
+      if (res.success && res.batchId) {
+        setBatchId(res.batchId);
+        setDrawerOpen(true);
+      } else {
+        alert(res.message || 'Không có học sinh nào cần đồng bộ');
+      }
+    } catch (err: any) {
+      alert(`Lỗi kích hoạt đồng bộ: ${err.message || 'Thất bại'}`);
+    }
+  };
+
+  const handleOpenManualReview = () => {
+    if (driftData) {
+      const items: ConflictItem[] = driftData.driftItems
+        .filter((d) => d.type === 'ALIAS_MISMATCH' || d.type === 'DB_ORPHAN')
+        .map((d, index) => ({
+          id: index + 1,
+          aliasId: d.aliasID,
+          cloudPersonId: d.personID,
+          cloudAliasId: d.aliasID,
+          cloudName: d.cloudName || d.studentName,
+          conflictType: d.type,
+          status: 'pending_review',
+          createdAt: new Date().toISOString(),
+        }));
+      setConflictsList(items);
+    }
+    setManualReviewOpen(true);
   };
 
   useEffect(() => {
@@ -180,12 +240,34 @@ export const CloudFaceInspectorTab: React.FC = () => {
 
         <div className="flex items-center gap-2">
           <button
+            onClick={handleReconcileCloud}
+            disabled={reconcileLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-indigo-300 bg-indigo-50 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 shadow-sm disabled:opacity-50"
+          >
+            <Sparkles className={`h-4 w-4 ${reconcileLoading ? 'animate-spin' : ''}`} />
+            Nạp đối soát Cloud (10p)
+          </button>
+          <button
+            onClick={() => handleSyncClass()}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-blue-600 bg-blue-600 text-xs font-semibold text-white hover:bg-blue-700 shadow-sm"
+          >
+            <Cloud className="h-4 w-4" />
+            Đồng bộ AliasID
+          </button>
+          <button
             onClick={fetchDriftData}
             disabled={driftLoading}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-purple-300 bg-purple-50 text-xs font-semibold text-purple-700 hover:bg-purple-100 shadow-sm disabled:opacity-50"
           >
             <Database className={`h-4 w-4 ${driftLoading ? 'animate-pulse' : ''}`} />
             Đối soát CSDL
+          </button>
+          <button
+            onClick={handleOpenManualReview}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-xs font-semibold text-amber-700 hover:bg-amber-100 shadow-sm"
+          >
+            <AlertTriangle className="h-4 w-4" />
+            Duyệt thủ công
           </button>
           <button
             onClick={() => fetchData(true)}
@@ -616,7 +698,16 @@ export const CloudFaceInspectorTab: React.FC = () => {
               )}
             </div>
 
-            <div className="p-3 border-t bg-gray-50 flex justify-end">
+            <div className="p-3 border-t bg-gray-50 flex justify-between items-center">
+              <button
+                onClick={() => {
+                  setShowDriftModal(false);
+                  handleSyncClass();
+                }}
+                className="px-4 py-1.5 rounded-lg bg-indigo-600 text-xs font-semibold text-white hover:bg-indigo-700 shadow-sm"
+              >
+                Đồng bộ vào Hàng Đợi (BullMQ)
+              </button>
               <button
                 onClick={() => setShowDriftModal(false)}
                 className="px-4 py-1.5 rounded-lg bg-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-300"
@@ -627,6 +718,23 @@ export const CloudFaceInspectorTab: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Drawer Giám sát tiến độ đồng bộ Short Polling 3s (ADR-004) */}
+      <SyncProgressDrawer
+        isOpen={drawerOpen}
+        batchId={batchId}
+        onClose={() => setDrawerOpen(false)}
+        onCompleted={() => {
+          fetchData(true);
+        }}
+      />
+
+      {/* Modal Xử lý thủ công các ca xung đột */}
+      <ManualReviewModal
+        isOpen={manualReviewOpen}
+        conflicts={conflictsList}
+        onClose={() => setManualReviewOpen(false)}
+      />
     </div>
   );
 };

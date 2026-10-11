@@ -6,7 +6,9 @@ import {
   HanetClientResult,
   RegisterByUrlParams,
   UpdateByFaceImageParams,
-  ConnectionStatusResult
+  ConnectionStatusResult,
+  UpdateAliasIDParams,
+  AddPersonToDepartmentParams
 } from './types.js';
 
 export * from './types.js';
@@ -160,7 +162,7 @@ export class HanetClient {
   }
 
   /**
-   * 5. Xóa nhân sự theo personID
+   * 5. Xóa nhân sự theo personID (CẢNH BÁO HIẾN PHÁP: CẤM SỬ DỤNG TRONG NGHIỆP VỤ HỌC SINH)
    */
   public async removePersonByID(personID: string): Promise<HanetClientResult<any>> {
     const form = new URLSearchParams();
@@ -168,5 +170,29 @@ export class HanetClient {
     form.append('personID', personID);
 
     return this.executePost<any>('/person/removePersonByID', form);
+  }
+
+  /**
+   * 6. Cập nhật mã AliasID mới cho nhân sự (POST /person/updateAliasID)
+   */
+  public async updateAliasID(params: UpdateAliasIDParams): Promise<HanetClientResult<any>> {
+    const form = new URLSearchParams();
+    form.append('token', this.token);
+    form.append('personID', params.personID);
+    form.append('aliasID', params.aliasID);
+
+    return this.executePost<any>('/person/updateAliasID', form);
+  }
+
+  /**
+   * 7. Gán nhân sự vào phòng ban (POST /department/add-person)
+   */
+  public async addPersonToDepartment(params: AddPersonToDepartmentParams): Promise<HanetClientResult<any>> {
+    const form = new URLSearchParams();
+    form.append('token', this.token);
+    form.append('departmentID', String(params.departmentID));
+    form.append('personIDs', params.personID);
+
+    return this.executePost<any>('/department/add-person', form);
   }
 }

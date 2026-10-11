@@ -12,6 +12,8 @@ import { HanetClient } from '@thanh-giuse/hanet-client';
 import type { RegistrationJobDataExtended } from '@thanh-giuse/shared-types';
 import { workerEnv } from './config.js';
 import { processRegistrationJob } from './processor.js';
+import { handleUpdateAlias } from './processors/update-alias.processor.js';
+import { handleHanetSync2000 } from './processors/hanet-sync.processor.js';
 
 // ═══ Khởi tạo hạ tầng qua factory ═══
 const dbPool = createDbPool(workerEnv.db);
@@ -34,10 +36,10 @@ console.log('[WORKER] Starting BullMQ consumer on registration_queue...');
 console.log(`[WORKER CONFIG] HANET Base URL: ${workerEnv.hanet.baseUrl} | Static Base: ${workerEnv.staticBaseUrl}`);
 
 // Concurrency = 1 BẤT BIẾN theo Hiến pháp dự án (chống OOM khi Sharp resize)
-export const registrationWorker = new Worker<RegistrationJobDataExtended>(
+export const registrationWorker = new Worker(
   'registration_queue',
-  async (job: Job<RegistrationJobDataExtended>) => {
-    return processRegistrationJob(job, {
+  async (job: Job) => {
+    const context = {
       studentRepo,
       logRepo,
       settingsRepo,
@@ -47,7 +49,19 @@ export const registrationWorker = new Worker<RegistrationJobDataExtended>(
         console.warn('[WORKER] Kích hoạt tạm dừng Worker (pause queue)!');
         await registrationWorker.pause();
       },
-    });
+    };
+
+    switch (job.name) {
+      case 'update_alias':
+        return await handleUpdateAlias(job as Job<any>, context);
+
+      case 'sync_hanet_2000':
+        return await handleHanetSync2000(job as Job<any>);
+
+      case 'register_face':
+      default:
+        return await processRegistrationJob(job as Job<RegistrationJobDataExtended>, context);
+    }
   },
   {
     connection: redisClient,

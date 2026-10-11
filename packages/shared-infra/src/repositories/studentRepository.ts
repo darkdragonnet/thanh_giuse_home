@@ -247,6 +247,28 @@ export class StudentRepository {
   }
 
   /**
+   * Cập nhật alias_id mới và đánh dấu thành công sau khi hoàn tất quy trình 2 bước trên HANET
+   */
+  public async updateAliasSuccess(
+    studentId: number,
+    newAlias: string
+  ): Promise<StudentRecord | null> {
+    const query = `
+      UPDATE students 
+       SET 
+         alias_id = $1,
+         status = 'success',
+         last_error_code = NULL,
+         last_error_message = NULL,
+         updated_at = NOW()
+       WHERE id = $2
+       RETURNING *;
+    `;
+    const res = await this.pool.query(query, [newAlias, studentId]);
+    return (res.rows[0] as StudentRecord) || null;
+  }
+
+  /**
    * Ghi nhận xung đột khuôn mặt vào bảng sync_conflicts
    */
   public async recordSyncConflict(params: {

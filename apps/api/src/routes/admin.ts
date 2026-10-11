@@ -911,5 +911,229 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
 
       return reply.send({ success: true, data: report });
     });
+
+    // 14. POST /api/admin/sync-alias (Đồng bộ AliasID và Đăng ký theo lô vào BullMQ)
+    protectedRoutes.post('/sync-alias', {
+      schema: {
+        body: {
+          type: 'object',
+          properties: {
+            student_ids: { type: 'array', items: { type: 'number' } },
+            class_id: { type: 'number' },
+            force_update_photo: { type: 'boolean' },
+          },
+        },
+      },
+    }, async (request, reply) => {
+      const body = request.body as {
+        student_ids?: number[];
+        class_id?: number;
+        force_update_photo?: boolean;
+      };
+
+      if (!body.class_id && (!body.student_ids || body.student_ids.length === 0)) {
+        return reply.status(400).send({
+          success: false,
+          message: 'Vui lòng cung cấp class_id hoặc danh sách student_ids để đồng bộ',
+        });
+      }
+
+      // 1. Xác định danh sách student ID
+      let targetStudentIds: number[] = [];
+      if (body.class_id) {
+        const classStudentsRes = await fastify.pg.query<{ id: number }>(
+          'SELECT id FROM students WHERE class_id = $1',
+          [body.class_id]
+        );
+        targetStudentIds = classStudentsRes.rows.map((r) => r.id);
+      } else if (body.student_ids) {
+        targetStudentIds = body.student_ids;
+      }
+
+      if (targetStudentIds.length === 0) {
+        return reply.status(400).send({
+          success: false,
+          message: 'Không tìm thấy học sinh nào thuộc điều kiện đồng bộ',
+        });
+      }
+
+      // 2. Atomic Conditional Update: Chuyển các bản ghi hợp lệ sang 'pending'
+      const updateResult = await fastify.pg.query<{
+        id: number;
+        class_id: number | null;
+        name: string;
+        alias_id: string;
+        person_id: string | null;
+      }>(
+        `UPDATE students
+         SET status = 'pending', updated_at = NOW()
+         WHERE id = ANY($1)
+           AND status IN ('empty', 'error', 'manual_review', 'conflict_pending_review', 'success', 'synced')
+         RETURNING id, class_id, name, alias_id, person_id`,
+        [targetStudentIds]
+      );
+
+      const eligibleStudents = updateResult.rows;
+      if (eligibleStudents.length === 0) {
+        return reply.send({
+          success: true,
+          batchId: null,
+          queuedCount: 0,
+          message: 'Tất cả học sinh đã chọn hiện đang ở trạng thái pending xử lý, không cần đưa vào hàng đợi lại.',
+        });
+      }
+
+      // 3. Tải bản đồ thông tin lớp (classes) để map department_code và class code
+      const classesRes = await fastify.pg.query<{ id: number; code: string; department_code: string | null }>(
+        'SELECT id, code, department_code FROM classes'
+      );
+      const classMap = new Map<number, { code: string; departmentCode: string }>();
+      for (const c of classesRes.rows) {
+        classMap.set(c.id, {
+          code: c.code,
+          departmentCode: c.department_code || c.code,
+        });
+      }
+
+      // 4. Khởi tạo Batch ID và Redis Hash với TTL 7200s (2 giờ)
+      const batchId = `batch_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+      const batchKey = `batch:${batchId}`;
+      await redis.hset(batchKey, {
+        batch_id: batchId,
+        total: eligibleStudents.length,
+        processed: 0,
+        success: 0,
+        failed: 0,
+        is_done: '0',
+        created_at: new Date().toISOString(),
+      });
+      await redis.expire(batchKey, 7200);
+
+      // 5. Enqueue từng job vào BullMQ registration_queue (Priority = 1)
+      for (const s of eligibleStudents) {
+        const classInfo = s.class_id ? classMap.get(s.class_id) : undefined;
+        const deptId = classInfo?.departmentCode || '0';
+        const classCode = classInfo?.code || 'DEFAULT';
+
+        if (s.person_id) {
+          // Job update_alias: Quy trình 2 bước đổi alias & bảo toàn phòng ban
+          await registrationQueue.add(
+            'update_alias',
+            {
+              batchId,
+              studentId: s.id,
+              classId: s.class_id,
+              aliasId: s.alias_id,
+              newAlias: s.alias_id,
+              personId: s.person_id,
+              studentName: s.name,
+              departmentId: deptId,
+            },
+            {
+              jobId: `update_alias_${batchId}_${s.id}`,
+              priority: 1, // Admin priority cao nhất
+            }
+          );
+        } else {
+          // Job register_face: Đăng ký mới kèm ảnh
+          await registrationQueue.add(
+            'register_face',
+            {
+              batchId,
+              studentId: s.id,
+              classId: s.class_id,
+              aliasId: s.alias_id,
+              studentName: s.name,
+              classCode,
+              tempFilename: `${s.alias_id}.jpg`,
+              actionType: 'REGISTER',
+            },
+            {
+              jobId: `register_face_${batchId}_${s.id}`,
+              priority: 1,
+            }
+          );
+        }
+      }
+
+      return reply.status(202).send({
+        success: true,
+        batchId,
+        queuedCount: eligibleStudents.length,
+        message: `Đã đưa ${eligibleStudents.length} học sinh vào hàng đợi đồng bộ`,
+      });
+    });
+
+    // 15. GET /api/admin/sync-batches/:batchId/status (Short Polling tiến độ batch 3s)
+    protectedRoutes.get('/sync-batches/:batchId/status', async (request, reply) => {
+      const { batchId } = request.params as { batchId: string };
+      const batchKey = `batch:${batchId}`;
+      const data = await redis.hgetall(batchKey);
+
+      if (!data || Object.keys(data).length === 0) {
+        return reply.status(404).send({
+          success: false,
+          message: 'Không tìm thấy batch tiến trình hoặc đã hết hạn lưu trữ',
+        });
+      }
+
+      return reply.send({
+        success: true,
+        data: {
+          batchId,
+          total: Number(data.total || 0),
+          processed: Number(data.processed || 0),
+          success: Number(data.success || 0),
+          failed: Number(data.failed || 0),
+          isDone: data.is_done === '1' || data.is_done === 'true',
+          createdAt: data.created_at,
+        },
+      });
+    });
+
+    // 16. POST /api/admin/reconcile-cloud (Kích hoạt nạp cache Cloud 10 phút & đối soát)
+    protectedRoutes.post('/reconcile-cloud', async (request, reply) => {
+      const cacheKey = 'cache:hanet:real_cloud_faces';
+      const token = process.env.HANET_ACCESS_TOKEN || process.env.HANET_TOKEN || '';
+      const placeID = process.env.HANET_PLACE_ID || '998577';
+      const primaryUrl = (process.env.HANET_API_BASE_URL || 'https://partner.hanet.ai').replace(/\/$/, '');
+
+      if (!token) {
+        return reply.status(500).send({
+          success: false,
+          message: 'Thiếu cấu hình HANET_ACCESS_TOKEN trong .env',
+        });
+      }
+
+      try {
+        const { rawList, isLiveCloud } = await fetchAllRawCloudFaces(token, placeID, primaryUrl, request.log);
+        const responsePayload = processCloudFaces(rawList, placeID, isLiveCloud);
+
+        // Lưu Cache 600s (10 phút)
+        await redis.set(cacheKey, JSON.stringify(responsePayload), 'EX', 600);
+
+        return reply.send({
+          success: true,
+          message: `Đã tải và cache ${responsePayload.total} khuôn mặt từ Cloud (TTL 10 phút)`,
+          data: {
+            totalFaces: responsePayload.total,
+            validCount: responsePayload.validCount,
+            errorCount: responsePayload.errorCount,
+          },
+        });
+      } catch (err: any) {
+        if (err.returnCode === -103 || err.message === 'HANET_TOKEN_EXPIRED') {
+          return reply.status(401).send({
+            success: false,
+            returnCode: -103,
+            message: 'HANET Access Token đã hết hạn (-103)',
+          });
+        }
+        return reply.status(502).send({
+          success: false,
+          message: `Lỗi kết nối HANET Cloud: ${err.message || 'Không thể đồng bộ'}`,
+        });
+      }
+    });
   });
 };

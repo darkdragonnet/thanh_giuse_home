@@ -26,8 +26,7 @@ services:
     container_name: thanh_giuse_proxy
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "8080:80"
+      - "${PROXY_PORT:-8090}:80"
     volumes:
       - shared_images_volume:/app/storage/images:ro
       - shared_images_volume:/app/uploads:ro
@@ -66,7 +65,10 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     networks:
-      - thanh_giuse_net
+      thanh_giuse_net:
+        aliases:
+          - postgres
+          - app_postgres
     deploy:
       resources:
         limits:
@@ -91,7 +93,10 @@ services:
       - redis_data:/data
       - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
     networks:
-      - thanh_giuse_net
+      thanh_giuse_net:
+        aliases:
+          - redis
+          - app_redis
     deploy:
       resources:
         limits:
