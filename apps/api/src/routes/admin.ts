@@ -1075,8 +1075,13 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
     });
 
-    // 14b. POST /api/admin/hanet/sync-cloud-aliases (Chuẩn hóa toàn bộ 137 Face ID trên Cloud HANET về chuẩn 9 ký tự)
+    // 14b. POST /api/admin/hanet/sync-cloud-aliases (Chuẩn hóa Face ID trên Cloud HANET về chuẩn 9 ký tự: 1 người, chọn lọc, hoặc toàn bộ)
     protectedRoutes.post('/hanet/sync-cloud-aliases', async (request, reply) => {
+      const body = (request.body || {}) as { person_ids?: string[] };
+      const selectedPersonIds = Array.isArray(body.person_ids) && body.person_ids.length > 0
+        ? new Set(body.person_ids.map((id) => String(id).trim()))
+        : null;
+
       const token = process.env.HANET_ACCESS_TOKEN || process.env.HANET_TOKEN || '';
       const placeID = process.env.HANET_PLACE_ID || '998577';
       const primaryUrl = (process.env.HANET_API_BASE_URL || 'https://partner.hanet.ai').replace(/\/$/, '');
@@ -1101,14 +1106,20 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // 2. Lọc các khuôn mặt hợp lệ có aliasChuanHoaDuKien
-      const validItems = cloudData.items.filter((item) => !item.isError && item.aliasChuanHoaDuKien);
+      // 2. Lọc các khuôn mặt hợp lệ có aliasChuanHoaDuKien (và lọc theo person_ids nếu có)
+      let validItems = cloudData.items.filter((item) => !item.isError && item.aliasChuanHoaDuKien);
+      if (selectedPersonIds) {
+        validItems = validItems.filter((item) => selectedPersonIds.has(item.personID));
+      }
+
       if (validItems.length === 0) {
         return reply.send({
           success: true,
           batchId: null,
           queuedCount: 0,
-          message: 'Không tìm thấy khuôn mặt nào cần chuẩn hóa trên Cloud.',
+          message: selectedPersonIds
+            ? 'Không tìm thấy khuôn mặt hợp lệ nào trong danh sách đã chọn.'
+            : 'Không tìm thấy khuôn mặt nào cần chuẩn hóa trên Cloud.',
         });
       }
 

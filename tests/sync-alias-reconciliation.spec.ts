@@ -1,7 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { HanetClient } from '../packages/hanet-client/src/index.js';
 import { handleUpdateAlias } from '../apps/worker/src/processors/update-alias.processor.js';
-import { parseAndClassifyAlias } from '../packages/shared-types/src/index.js';
+import {
+  parseAndClassifyAlias,
+  generateDeterministicSuffix4,
+  normalizePrefix4,
+} from '../packages/shared-types/src/index.js';
 
 describe('Kiểm thử Hệ thống Đối Soát & Đồng Bộ AliasID (Phase 4 Verification)', () => {
   // =========================================================================
@@ -228,10 +232,10 @@ describe('Kiểm thử Hệ thống Đối Soát & Đồng Bộ AliasID (Phase 4
   });
 
   // =========================================================================
-  // TEST CASE 7: BÓC TÁCH VÀ CHUẨN HÓA DỮ LIỆU CLOUD HANET THỰC TẾ VỀ 9 KÝ TỰ
+  // TEST CASE 7: BÓC TÁCH VÀ CHUẨN HÓA DỮ LIỆU CLOUD HANET THỰC TẾ VỀ 9 KÝ TỰ (FNV-1a HASH)
   // =========================================================================
   describe('Bóc tách & Chuẩn hóa Alias Cloud Thực Tế về 9 Ký Tự', () => {
-    it('Phải chuẩn hóa mã Giáo Lý Viên 2 phần (GLV_FK2S -> GLV0_FK2S)', () => {
+    it('Phải chuẩn hóa mã Giáo Lý Viên 2 phần với hậu tố FNV-1a từ personID', () => {
       const res = parseAndClassifyAlias({
         personID: '12345',
         name: 'LUCIA Lê Thanh Minh Phương',
@@ -243,11 +247,13 @@ describe('Kiểm thử Hệ thống Đối Soát & Đồng Bộ AliasID (Phase 4
       expect(res.partsCount).toBe(2);
       expect(res.nhom1_nganh).toBe('TN');
       expect(res.maLopChuanHoa).toBe('GLV0');
-      expect(res.aliasChuanHoaDuKien).toBe('GLV0_FK2S');
+      // Hậu tố sinh mới 100% theo FNV-1a từ personID '12345'
+      expect(res.aliasChuanHoaDuKien).toBe('GLV0_UCWO');
       expect(res.aliasChuanHoaDuKien).toHaveLength(9);
+      expect(/^[A-Za-z]{2}[A-Za-z0-9]{2}_[A-Za-z0-9]{4}$/.test(res.aliasChuanHoaDuKien!)).toBe(true);
     });
 
-    it('Phải chuẩn hóa mã Thiếu Nhi 3 phần legacy (TN_XUNGTOI2A_4BDI -> RL2A_4BDI)', () => {
+    it('Phải chuẩn hóa mã Thiếu Nhi 3 phần legacy với tiền tố RL2A và hậu tố FNV-1a', () => {
       const res = parseAndClassifyAlias({
         personID: '67890',
         name: 'EMMANUEL Nguyễn Văn Nam',
@@ -259,11 +265,13 @@ describe('Kiểm thử Hệ thống Đối Soát & Đồng Bộ AliasID (Phase 4
       expect(res.partsCount).toBe(3);
       expect(res.nhom1_nganh).toBe('TN');
       expect(res.maLopChuanHoa).toBe('RL2A');
-      expect(res.aliasChuanHoaDuKien).toBe('RL2A_4BDI');
+      // Hậu tố sinh mới 100% theo FNV-1a từ personID '67890'
+      expect(res.aliasChuanHoaDuKien).toBe('RL2A_C9BB');
       expect(res.aliasChuanHoaDuKien).toHaveLength(9);
+      expect(/^[A-Za-z]{2}[A-Za-z0-9]{2}_[A-Za-z0-9]{4}$/.test(res.aliasChuanHoaDuKien!)).toBe(true);
     });
 
-    it('Phải giữ nguyên mã đã đúng chuẩn 9 ký tự (TS1A_0001 -> TS1A_0001)', () => {
+    it('Mọi alias đều sinh hậu tố bất biến FNV-1a dựa trên personID', () => {
       const res = parseAndClassifyAlias({
         personID: '11111',
         name: 'MARIA Trần Thị Hà',
@@ -272,8 +280,10 @@ describe('Kiểm thử Hệ thống Đối Soát & Đồng Bộ AliasID (Phase 4
 
       expect(res.isError).toBe(false);
       expect(res.maLopChuanHoa).toBe('TS1A');
-      expect(res.aliasChuanHoaDuKien).toBe('TS1A_0001');
+      // personID '11111' -> hash '5CZC'
+      expect(res.aliasChuanHoaDuKien).toBe('TS1A_5CZC');
       expect(res.aliasChuanHoaDuKien).toHaveLength(9);
+      expect(/^[A-Za-z]{2}[A-Za-z0-9]{2}_[A-Za-z0-9]{4}$/.test(res.aliasChuanHoaDuKien!)).toBe(true);
     });
 
     it('Phải bảo toàn trường departmentID từ dữ liệu Cloud sang kết quả phân tích', () => {
@@ -286,7 +296,8 @@ describe('Kiểm thử Hệ thống Đối Soát & Đồng Bộ AliasID (Phase 4
 
       expect(res.isError).toBe(false);
       expect(res.departmentID).toBe(990653);
-      expect(res.aliasChuanHoaDuKien).toBe('GLV0_FNWD');
+      expect(res.aliasChuanHoaDuKien).toBe('GLV0_HV0I');
+      expect(res.aliasChuanHoaDuKien).toHaveLength(9);
     });
 
     it('Phải bắt lỗi nếu alias trống', () => {
@@ -375,5 +386,65 @@ describe('Kiểm thử Hệ thống Đối Soát & Đồng Bộ AliasID (Phase 4
       expect(mockRedis.del).toHaveBeenCalledWith('cache:hanet:real_cloud_faces');
     });
   });
+
+  // =========================================================================
+  // TEST CASE 8: THUẬT TOÁN HASH FNV-1a PURE JS (generateDeterministicSuffix4)
+  // =========================================================================
+  describe('Thuật toán Hash FNV-1a Pure JS Base36 (generateDeterministicSuffix4)', () => {
+    it('Phải sinh đúng 4 ký tự chữ-số viết hoa', () => {
+      const suffix1 = generateDeterministicSuffix4('3318422336469729280');
+      const suffix2 = generateDeterministicSuffix4('18897244400810101');
+      const suffix3 = generateDeterministicSuffix4('0');
+
+      expect(suffix1).toHaveLength(4);
+      expect(suffix2).toHaveLength(4);
+      expect(suffix3).toHaveLength(4);
+      expect(/^[A-Z0-9]{4}$/.test(suffix1)).toBe(true);
+      expect(/^[A-Z0-9]{4}$/.test(suffix2)).toBe(true);
+      expect(/^[A-Z0-9]{4}$/.test(suffix3)).toBe(true);
+    });
+
+    it('Phải hoàn toàn xác định (Deterministic): Cùng 1 personID luôn cho cùng 1 suffix', () => {
+      const pId = '18897244400810101';
+      const run1 = generateDeterministicSuffix4(pId);
+      const run2 = generateDeterministicSuffix4(pId);
+      const run3 = generateDeterministicSuffix4(pId);
+
+      expect(run1).toBe(run2);
+      expect(run2).toBe(run3);
+    });
+
+    it('Khác personID phải cho suffix khác nhau (Tính phân tán cao)', () => {
+      const s1 = generateDeterministicSuffix4('18897244400810101');
+      const s2 = generateDeterministicSuffix4('18897244400810102');
+      const s3 = generateDeterministicSuffix4('18897244400810103');
+
+      expect(s1).not.toBe(s2);
+      expect(s2).not.toBe(s3);
+      expect(s1).not.toBe(s3);
+    });
+  });
+
+  // =========================================================================
+  // TEST CASE 9: QUY TẮC CHUẨN HÓA TIỀN TỐ 4 KÝ TỰ (normalizePrefix4)
+  // =========================================================================
+  describe('Quy tắc Chuẩn Hóa Tiền Tố (normalizePrefix4)', () => {
+    it('Mã có trong từ điển phải ánh xạ chính xác (THEMSUC1A -> TS1A, XUNGTOI2A -> RL2A, BAODONG3 -> BD3A)', () => {
+      expect(normalizePrefix4('THEMSUC1A')).toBe('TS1A');
+      expect(normalizePrefix4('XUNGTOI2A')).toBe('RL2A');
+      expect(normalizePrefix4('BAODONG3')).toBe('BD3A');
+    });
+
+    it('Mã ngắn hơn 4 ký tự phải đệm cho đủ 4 ký tự', () => {
+      expect(normalizePrefix4('GLV')).toBe('GLV0');
+      expect(normalizePrefix4('TN')).toBe('TN01');
+    });
+
+    it('Mã dài hơn 4 ký tự chưa trong từ điển: 2 ký tự đầu + 2 ký tự đuôi', () => {
+      // GIAOLY1A -> 2 ký tự đầu 'GI' + đuôi '1A' -> GI1A
+      expect(normalizePrefix4('GIAOLY1A')).toBe('GI1A');
+    });
+  });
 });
+
 

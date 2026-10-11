@@ -51,6 +51,31 @@ export const CloudFaceInspectorTab: React.FC = () => {
   const [reconcileLoading, setReconcileLoading] = useState(false);
   const [manualReviewOpen, setManualReviewOpen] = useState(false);
   const [conflictsList, setConflictsList] = useState<ConflictItem[]>([]);
+  const [selectedPersonIds, setSelectedPersonIds] = useState<Set<string>>(new Set());
+
+  const toggleSelectPerson = (personID: string) => {
+    setSelectedPersonIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(personID)) {
+        next.delete(personID);
+      } else {
+        next.add(personID);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectGroup = (groupItems: ParsedCloudResult[], checkAll: boolean) => {
+    setSelectedPersonIds((prev) => {
+      const next = new Set(prev);
+      if (checkAll) {
+        groupItems.forEach((i) => next.add(i.personID));
+      } else {
+        groupItems.forEach((i) => next.delete(i.personID));
+      }
+      return next;
+    });
+  };
 
   const fetchDriftData = async () => {
     setDriftLoading(true);
@@ -103,6 +128,67 @@ export const CloudFaceInspectorTab: React.FC = () => {
     }
   };
 
+  // Cấp độ 1: Đồng bộ 1 người lẻ
+  const handleSyncSinglePerson = async (person: ParsedCloudResult) => {
+    const isConfirm = window.confirm(
+      `Đồng bộ chuẩn hóa 1 nhân sự lên HANET Cloud?\n\n` +
+      `• Họ tên: ${person.name}\n` +
+      `• Mã cũ: ${person.rawAliasID}\n` +
+      `• Mã chuẩn hóa mới: ${person.aliasChuanHoaDuKien}\n` +
+      `• PersonID: ${person.personID}`
+    );
+    if (!isConfirm) return;
+
+    try {
+      const res = await apiClient.post<{
+        success: boolean;
+        batchId: string;
+        queuedCount: number;
+        message: string;
+      }>('/hanet/sync-cloud-aliases', { person_ids: [person.personID] });
+      if (res.success && res.batchId) {
+        setBatchId(res.batchId);
+        setDrawerOpen(true);
+      } else {
+        alert(res.message || 'Không có bản ghi nào cần đồng bộ');
+      }
+    } catch (err: any) {
+      alert(`Lỗi kích hoạt đồng bộ: ${err.message || 'Thất bại'}`);
+    }
+  };
+
+  // Cấp độ 2: Đồng bộ nhóm chọn lọc (qua checkbox)
+  const handleSyncSelectedPersons = async () => {
+    const count = selectedPersonIds.size;
+    if (count === 0) return;
+    const isConfirm = window.confirm(
+      `Xác nhận bắt đầu đồng bộ chuẩn hóa ${count} nhân sự đã chọn lên HANET Cloud?\n\n` +
+      `• Quy trình 2 bước: updateAliasID -> Delay 120ms -> addPersonToDepartment\n` +
+      `• Rate Limit Giãn cách an toàn: 3 giây/người\n` +
+      `• Thời gian ước tính: ~${Math.ceil((count * 3.5) / 60)} phút\n\n` +
+      `Bạn có muốn tiếp tục?`
+    );
+    if (!isConfirm) return;
+
+    try {
+      const res = await apiClient.post<{
+        success: boolean;
+        batchId: string;
+        queuedCount: number;
+        message: string;
+      }>('/hanet/sync-cloud-aliases', { person_ids: Array.from(selectedPersonIds) });
+      if (res.success && res.batchId) {
+        setBatchId(res.batchId);
+        setDrawerOpen(true);
+      } else {
+        alert(res.message || 'Không có bản ghi nào cần đồng bộ');
+      }
+    } catch (err: any) {
+      alert(`Lỗi kích hoạt chuẩn hóa nhóm chọn: ${err.message || 'Thất bại'}`);
+    }
+  };
+
+  // Cấp độ 3: Đồng bộ toàn bộ (độc lập với selection, gửi body rỗng)
   const handleSyncAllCloudAliases = async () => {
     const totalCount = data?.total || 137;
     const isConfirm = window.confirm(
@@ -120,7 +206,7 @@ export const CloudFaceInspectorTab: React.FC = () => {
         batchId: string;
         queuedCount: number;
         message: string;
-      }>('/hanet/sync-cloud-aliases');
+      }>('/hanet/sync-cloud-aliases', {});
       if (res.success && res.batchId) {
         setBatchId(res.batchId);
         setDrawerOpen(true);
@@ -395,6 +481,35 @@ export const CloudFaceInspectorTab: React.FC = () => {
         </div>
       </div>
 
+      {/* Banner Hành Động Nhóm Đã Chọn (Cấp độ 2) */}
+      {selectedPersonIds.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-blue-50 border border-blue-200 rounded-xl shadow-sm text-xs animate-in fade-in duration-200">
+          <div className="flex items-center gap-2">
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-white font-bold text-xs">
+              {selectedPersonIds.size}
+            </span>
+            <span className="font-semibold text-blue-900">
+              Đã chọn <b>{selectedPersonIds.size}</b> nhân sự để chuẩn hóa
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSyncSelectedPersons}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 shadow-sm"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Cập nhật đã chọn ({selectedPersonIds.size} nhân sự)
+            </button>
+            <button
+              onClick={() => setSelectedPersonIds(new Set())}
+              className="px-2.5 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+            >
+              Bỏ chọn tất cả
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* KHỐI 1: BẢNG CẢNH BÁO BẢN GHI LỖI (UNPARSED) */}
       {(sectorFilter === 'ALL' || sectorFilter === 'ERROR') && errorItems.length > 0 && (
         <div className="rounded-xl border border-rose-200 bg-white overflow-hidden shadow-sm">
@@ -499,6 +614,8 @@ export const CloudFaceInspectorTab: React.FC = () => {
             const firstItem = items[0];
             if (!firstItem) return null;
             const isOpen = openGroups[groupKey];
+            const allInGroupSelected =
+              items.length > 0 && items.every((i) => selectedPersonIds.has(i.personID));
 
             return (
               <div
@@ -536,20 +653,37 @@ export const CloudFaceInspectorTab: React.FC = () => {
                     <table className="w-full text-left text-xs">
                       <thead className="bg-gray-50/50 text-gray-500 uppercase font-semibold">
                         <tr>
-                          <th className="px-4 py-2.5">Ảnh</th>
+                          <th className="px-3 py-2.5 w-8">
+                            <input
+                              type="checkbox"
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                              checked={allInGroupSelected}
+                              onChange={(e) => toggleSelectGroup(items, e.target.checked)}
+                              title="Chọn toàn bộ nhóm này"
+                            />
+                          </th>
+                          <th className="px-3 py-2.5">Ảnh</th>
                           <th className="px-4 py-2.5">Họ và tên</th>
                           <th className="px-4 py-2.5">aliasID Gốc</th>
                           <th className="px-4 py-2.5 text-blue-700 bg-blue-50/50">
                             Mã Dự Phóng Mới (TênLớp_Mã)
                           </th>
                           <th className="px-4 py-2.5">PersonID</th>
-                          <th className="px-4 py-2.5 text-right">Xem ảnh</th>
+                          <th className="px-4 py-2.5 text-right">Thao tác</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 font-mono">
                         {items.map((item) => (
                           <tr key={item.personID} className="hover:bg-gray-50/50">
-                            <td className="px-4 py-2">
+                            <td className="px-3 py-2">
+                              <input
+                                type="checkbox"
+                                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                checked={selectedPersonIds.has(item.personID)}
+                                onChange={() => toggleSelectPerson(item.personID)}
+                              />
+                            </td>
+                            <td className="px-3 py-2">
                               <img
                                 src={item.file}
                                 alt={item.name}
@@ -587,13 +721,23 @@ export const CloudFaceInspectorTab: React.FC = () => {
                               </div>
                             </td>
                             <td className="px-4 py-2 text-right">
-                              <button
-                                onClick={() => setPreviewImage(item.file)}
-                                className="p-1 text-gray-500 hover:text-blue-600 rounded"
-                                title="Xem ảnh 1280x736"
-                              >
-                                <Eye className="h-4 w-4" />
-                              </button>
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  onClick={() => handleSyncSinglePerson(item)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 text-[11px] font-sans font-medium transition"
+                                  title={`Đồng bộ chuẩn hóa ${item.name} lên Cloud`}
+                                >
+                                  <Sparkles className="h-3 w-3" />
+                                  Đồng bộ
+                                </button>
+                                <button
+                                  onClick={() => setPreviewImage(item.file)}
+                                  className="p-1 text-gray-500 hover:text-blue-600 rounded transition"
+                                  title="Xem ảnh 1280x736"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
