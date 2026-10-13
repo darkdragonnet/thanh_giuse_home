@@ -101,7 +101,58 @@ await server.register(adminRoutes, { prefix: '/api/admin' });
 // Đăng ký Webhook Receiver (/api/webhooks/*)
 await server.register(webhookRoutes, { prefix: '/api/webhooks' });
 
-// 4. API Lấy danh sách học sinh theo lớp (Hỗ trợ cả classId số và classCode chuỗi như TS1A)
+// Hàm tiện ích mã hóa an toàn Header ASCII (RFC 7230 / RFC 8187)
+// Triệt tiêu lỗi TypeError [ERR_INVALID_CHAR] và chống CRLF Header Injection (\r\n -> %0D%0A)
+export function safeHeaderEncode(text: string | null | undefined): string {
+  if (!text) return '';
+  const trimmed = String(text).trim();
+  if (!trimmed) return '';
+  return encodeURIComponent(trimmed);
+}
+
+// Helper trích xuất mã PIN giáo viên từ Header hoặc Query
+function extractTeacherPin(request: any): string {
+  const raw =
+    (request.headers?.['x-teacher-pin'] as string) ||
+    (request.query as Record<string, string>)?.teacher_pin ||
+    (request.query as Record<string, string>)?.token ||
+    '';
+  return String(raw).trim();
+}
+
+// Helper đính kèm CORS & Exposed Headers chuẩn Production
+function applyClassPortalHeaders(
+  reply: any,
+  classCode: string | null | undefined,
+  className: string | null | undefined,
+  isTeacherVerified: boolean
+) {
+  const safeCode = String(classCode || '')
+    .replace(/[\r\n]/g, '')
+    .trim()
+    .toUpperCase();
+  reply.header('Access-Control-Allow-Origin', '*');
+  reply.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-teacher-pin');
+  reply.header('Access-Control-Expose-Headers', 'X-Class-Code, X-Class-Name, X-Teacher-Verified');
+  reply.header('X-Class-Code', safeCode);
+  reply.header('X-Class-Name', safeHeaderEncode(className));
+  reply.header('X-Teacher-Verified', isTeacherVerified ? 'true' : 'false');
+}
+
+// 4a. Hỗ trợ CORS Preflight OPTIONS cho route danh sách học sinh theo lớp
+server.options<{ Params: { classId: string } }>(
+  '/api/classes/:classId/students',
+  async (_request, reply) => {
+    reply.header('Access-Control-Allow-Origin', '*');
+    reply.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-teacher-pin');
+    reply.header('Access-Control-Expose-Headers', 'X-Class-Code, X-Class-Name, X-Teacher-Verified');
+    return reply.status(204).send();
+  }
+);
+
+// 4b. API Lấy danh sách học sinh theo lớp (Hỗ trợ cả classId số và classCode chuỗi như GLV0, TS1A)
 server.get<{ Params: { classId: string } }>(
   '/api/classes/:classId/students',
   {
@@ -110,8 +161,22 @@ server.get<{ Params: { classId: string } }>(
   async (request, reply) => {
     const rawParam = request.params.classId.trim();
     const numericClassId = parseInt(rawParam, 10);
+    const teacherPin = extractTeacherPin(request);
 
     if (!isNaN(numericClassId) && String(numericClassId) === rawParam) {
+      const classRecord =
+        typeof classRepo.findById === 'function' ? await classRepo.findById(numericClassId) : null;
+      const isTeacherVerified =
+        Boolean(teacherPin && classRecord && typeof classRepo.verifyTeacherPin === 'function')
+          ? await classRepo.verifyTeacherPin(classRecord!.id, teacherPin)
+          : false;
+
+      applyClassPortalHeaders(
+        reply,
+        classRecord?.code || String(numericClassId),
+        classRecord?.name ?? null,
+        isTeacherVerified
+      );
       const students = await studentRepo.getStudentsByClassId(numericClassId);
       return reply.send(students);
     }
@@ -123,12 +188,19 @@ server.get<{ Params: { classId: string } }>(
         message: `Không tìm thấy lớp học với mã "${rawParam}".`,
       });
     }
+
+    const isTeacherVerified =
+      Boolean(teacherPin && typeof classRepo.verifyTeacherPin === 'function')
+        ? await classRepo.verifyTeacherPin(classRecord.id, teacherPin)
+        : false;
+
+    applyClassPortalHeaders(reply, classRecord.code, classRecord.name, isTeacherVerified);
     const students = await studentRepo.getStudentsByClassId(classRecord.id);
     return reply.send(students);
   }
 );
 
-// Helper xử lý Luồng 1: Nộp ảnh học sinh theo lớp (Atomic Lock chống ghi đè + BullMQ Priority 5)
+// Helper xử lý Luồng 1: Nộp ảnh học sinh theo lớp (Atomic Lock chống ghi đè + Hỗ trợ Teacher PIN Override)
 async function handleClassStudentPhotoUpload(
   request: any,
   reply: any
@@ -151,9 +223,31 @@ async function handleClassStudentPhotoUpload(
     writeStream.on('error', reject);
   });
 
-  // B. Atomic Lock Database (Luồng 1): Chỉ cho phép 'empty'|'error'|'manual_review' -> 'pending'
-  // Khóa cứng nếu status = 'success' (HTTP 409 Conflict)
-  const claimed = await studentRepo.claimStudentForUpload(studentId, filePath);
+  // B. Kiểm tra mã PIN Giáo viên (Nếu có PIN hợp lệ của lớp -> cho phép cập nhật lại ảnh học sinh đã 'success')
+  const teacherPin = extractTeacherPin(request);
+  let isTeacherVerified = false;
+  if (teacherPin && typeof studentRepo.findById === 'function' && typeof classRepo.verifyTeacherPin === 'function') {
+    const targetStudent = await studentRepo.findById(studentId);
+    if (targetStudent) {
+      isTeacherVerified = await classRepo.verifyTeacherPin(targetStudent.class_id, teacherPin);
+    }
+  }
+
+  let claimed: any = null;
+  let mode: 'REGISTER' | 'UPDATE_PHOTO' = 'REGISTER';
+
+  if (isTeacherVerified && typeof (studentRepo as any).claimStudentForTeacherOverride === 'function') {
+    const overrideRes = await studentRepo.claimStudentForTeacherOverride(studentId, filePath);
+    if (overrideRes) {
+      claimed = overrideRes.student;
+      mode = overrideRes.mode;
+    }
+  } else {
+    // Học sinh tự nộp (Không có PIN hoặc PIN sai): Chỉ cho phép 'empty'|'error'|'manual_review' -> 'pending'
+    // Khóa cứng nếu status = 'success' (HTTP 409 Conflict)
+    claimed = await studentRepo.claimStudentForUpload(studentId, filePath);
+  }
+
   if (!claimed) {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     return reply.status(409).send({
@@ -168,9 +262,15 @@ async function handleClassStudentPhotoUpload(
 
   // D. Đẩy job vào hàng đợi BullMQ (Idempotent JobID ưu tiên qr_token hoặc alias_id)
   const safeIdentifier = claimed.alias_id || claimed.qr_token || String(claimed.id);
-  const jobId = `student_${safeIdentifier}`;
+  const isUpdatePhoto = mode === 'UPDATE_PHOTO' && Boolean(claimed.person_id);
+  const actionType = isUpdatePhoto ? 'UPDATE_PHOTO' : 'REGISTER';
+  const priority = isUpdatePhoto ? 1 : 5;
+  const jobId = isUpdatePhoto
+    ? `teacher_override_${safeIdentifier}_${Date.now()}`
+    : `student_${safeIdentifier}`;
+
   const job = await registrationQueue.add(
-    'register',
+    isUpdatePhoto ? 'override-photo' : 'register',
     {
       studentId: claimed.id,
       aliasId: claimed.alias_id,
@@ -179,11 +279,12 @@ async function handleClassStudentPhotoUpload(
       classCode,
       tempFilename: filename,
       uploadedAt: Date.now(),
-      actionType: 'REGISTER',
+      actionType,
+      ...(claimed.person_id ? { personId: claimed.person_id } : {}),
     },
     {
       jobId,
-      priority: 5, // Luồng 1: Học sinh đăng ký mới có priority = 5 (cao hơn Batch Sync = 20)
+      priority, // Priority = 1 nếu Giáo viên cập nhật ảnh, Priority = 5 nếu đăng ký mới
       removeOnComplete: true,
     }
   );
@@ -193,15 +294,19 @@ async function handleClassStudentPhotoUpload(
     student_id: claimed.id,
     alias_id: claimed.alias_id,
     class_id: claimed.class_id,
-    action: 'REGISTER',
-    result_code: 'QUEUED',
-    result_message: `Ảnh đã được lưu và đưa vào hàng đợi BullMQ (Job ID: ${job.id})`,
+    action: actionType,
+    result_code: isUpdatePhoto ? 'QUEUED_TEACHER_OVERRIDE' : 'QUEUED',
+    result_message: isUpdatePhoto
+      ? `Giáo viên cập nhật ảnh qua PIN lớp (Job ID: ${job.id})`
+      : `Ảnh đã được lưu và đưa vào hàng đợi BullMQ (Job ID: ${job.id})`,
     ip: request.ip,
   });
 
   return reply.status(200).send({
     success: true,
-    message: 'Nộp ảnh thành công! Yêu cầu đã vào hàng đợi xử lý.',
+    message: isUpdatePhoto
+      ? 'Cập nhật ảnh thành công! Yêu cầu của Giáo viên đã vào hàng đợi ưu tiên.'
+      : 'Nộp ảnh thành công! Yêu cầu đã vào hàng đợi xử lý.',
     jobId: job.id,
     student: claimed,
   });

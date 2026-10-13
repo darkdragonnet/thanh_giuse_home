@@ -257,6 +257,66 @@ export class StudentRepository {
   }
 
   /**
+   * Luồng 1b (Giáo viên hỗ trợ tại lớp có mã PIN hợp lệ):
+   * - Nếu học sinh đang ở status = 'success' (chưa có tiến trình cập nhật đang chạy):
+   *   Giữ nguyên status = 'success' và person_id, bật is_updating = TRUE (mode = 'UPDATE_PHOTO').
+   * - Nếu học sinh đang ở status IN ('empty', 'error', 'manual_review'):
+   *   Chuyển sang status = 'pending' (mode = 'REGISTER').
+   */
+  public async claimStudentForTeacherOverride(
+    studentId: number,
+    localImagePath: string
+  ): Promise<{ student: StudentRecord; mode: 'REGISTER' | 'UPDATE_PHOTO' } | null> {
+    // 1. Thử khóa ở chế độ Đổi ảnh khi đã 'success' (giữ nguyên status = 'success', bật is_updating = TRUE)
+    try {
+      const updatePhotoQuery = `
+        UPDATE students
+        SET
+          is_updating = TRUE,
+          local_image_path = $1,
+          updated_at = NOW()
+        WHERE id = $2
+          AND status = 'success'
+          AND COALESCE(is_updating, FALSE) = FALSE
+        RETURNING *;
+      `;
+      const updateRes = await this.pool.query(updatePhotoQuery, [localImagePath, studentId]);
+      if (updateRes.rows[0]) {
+        return {
+          student: updateRes.rows[0] as StudentRecord,
+          mode: 'UPDATE_PHOTO',
+        };
+      }
+    } catch {
+      // Fallback nếu DB cũ chưa có cột is_updating
+      const fallbackUpdateRes = await this.pool.query(
+        `UPDATE students
+         SET local_image_path = $1, updated_at = NOW()
+         WHERE id = $2 AND status = 'success'
+         RETURNING *;`,
+        [localImagePath, studentId]
+      );
+      if (fallbackUpdateRes.rows[0]) {
+        return {
+          student: fallbackUpdateRes.rows[0] as StudentRecord,
+          mode: 'UPDATE_PHOTO',
+        };
+      }
+    }
+
+    // 2. Thử khóa ở chế độ Đăng ký / Sửa lỗi ('empty', 'error', 'manual_review' -> 'pending')
+    const claimed = await this.claimStudentForClassRegister(studentId, localImagePath);
+    if (claimed) {
+      return {
+        student: claimed,
+        mode: 'REGISTER',
+      };
+    }
+
+    return null;
+  }
+
+  /**
    * Tính toán finalAliasId ở Pha 2 kèm Deterministic Linear Probing (attempt = 0..3)
    * chống va chạm Hash giữa 2 học sinh trong cùng một lớp.
    */

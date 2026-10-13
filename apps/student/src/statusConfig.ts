@@ -23,11 +23,13 @@ export interface StatusUIConfig {
 
 /**
  * Ma trận hiển thị trạng thái và nút bấm theo chuẩn đặc tả UI Student:
- * - empty (⚪ Xám): Nút chính: Đăng ký | Nút phụ: Ẩn.
+ * - empty (⚪ Xám): Nút chính: Đăng ký ngay | Nút phụ: Ẩn.
  * - pending (🟡 Vàng): Nút chính: Disabled ("Đang xử lý...") | Nút phụ: Gửi admin.
- * - success (🟢 Xanh lục): Nút chính: Cập nhật hình | Nút phụ: Gửi admin.
- * - error (🔴 Đỏ): Nút chính: Disabled | Nút phụ: Gửi admin.
- * - manual_review (🟠 Cam): Nút chính: Disabled ("Chờ duyệt") | Nút phụ: Gửi admin.
+ * - success / synced (🟢 Xanh lục):
+ *   + Học sinh (không có PIN): Nút chính: Disabled ("Đã hoàn tất đăng ký") | Nút phụ: Yêu cầu đổi ảnh (Gửi Admin).
+ *   + Giáo viên (có PIN hợp lệ): Nút chính: Enabled ("Cập nhật hình") | Nút phụ: Gửi admin.
+ * - error / failed_quota_exceeded (🔴 Đỏ): Nút chính: Enabled ("Thử đăng ký lại") | Nút phụ: Gửi admin.
+ * - manual_review / conflict_pending_review (🟠 Cam): Nút chính: Enabled ("Nộp lại ảnh khác") | Nút phụ: Gửi admin.
  */
 export const STATUS_UI_CONFIG: Record<StudentStatus, StatusUIConfig> = {
   empty: {
@@ -40,7 +42,7 @@ export const STATUS_UI_CONFIG: Record<StudentStatus, StatusUIConfig> = {
       border: '#d1d5db',
     },
     primaryButton: {
-      text: 'Đăng ký',
+      text: 'Đăng ký ngay',
       disabled: false,
       action: 'REGISTER',
     },
@@ -90,6 +92,26 @@ export const STATUS_UI_CONFIG: Record<StudentStatus, StatusUIConfig> = {
       action: 'CONTACT_ADMIN',
     },
   },
+  synced: {
+    label: 'Đã hoàn tất',
+    dotEmoji: '🟢',
+    colorName: 'Xanh lục',
+    badgeStyle: {
+      bg: '#dcfce7',
+      text: '#166534',
+      border: '#86efac',
+    },
+    primaryButton: {
+      text: 'Cập nhật hình',
+      disabled: false,
+      action: 'UPDATE_PHOTO',
+    },
+    secondaryButton: {
+      visible: true,
+      text: 'Gửi admin',
+      action: 'CONTACT_ADMIN',
+    },
+  },
   error: {
     label: 'Lỗi xử lý',
     dotEmoji: '🔴',
@@ -100,7 +122,27 @@ export const STATUS_UI_CONFIG: Record<StudentStatus, StatusUIConfig> = {
       border: '#fca5a5',
     },
     primaryButton: {
-      text: 'Đã xảy ra lỗi',
+      text: 'Thử đăng ký lại',
+      disabled: false,
+      action: 'REGISTER',
+    },
+    secondaryButton: {
+      visible: true,
+      text: 'Gửi admin',
+      action: 'CONTACT_ADMIN',
+    },
+  },
+  failed_quota_exceeded: {
+    label: 'Tạm khóa (Hết hạn mức)',
+    dotEmoji: '🔴',
+    colorName: 'Đỏ',
+    badgeStyle: {
+      bg: '#fee2e2',
+      text: '#991b1b',
+      border: '#fca5a5',
+    },
+    primaryButton: {
+      text: 'Tạm ngưng nhận ảnh',
       disabled: true,
       action: 'NONE',
     },
@@ -111,7 +153,27 @@ export const STATUS_UI_CONFIG: Record<StudentStatus, StatusUIConfig> = {
     },
   },
   manual_review: {
-    label: 'Chờ duyệt',
+    label: 'Cần chụp lại / Chờ duyệt',
+    dotEmoji: '🟠',
+    colorName: 'Cam',
+    badgeStyle: {
+      bg: '#ffedd5',
+      text: '#9a3412',
+      border: '#fdba74',
+    },
+    primaryButton: {
+      text: 'Nộp lại ảnh khác',
+      disabled: false,
+      action: 'REGISTER',
+    },
+    secondaryButton: {
+      visible: true,
+      text: 'Gửi admin',
+      action: 'CONTACT_ADMIN',
+    },
+  },
+  conflict_pending_review: {
+    label: 'Chờ duyệt xung đột',
     dotEmoji: '🟠',
     colorName: 'Cam',
     badgeStyle: {
@@ -131,3 +193,26 @@ export const STATUS_UI_CONFIG: Record<StudentStatus, StatusUIConfig> = {
     },
   },
 };
+
+export function resolveStudentStatusConfig(
+  status: StudentStatus,
+  isTeacherVerified = false
+): StatusUIConfig {
+  const base = STATUS_UI_CONFIG[status] || STATUS_UI_CONFIG.empty;
+  if ((status === 'success' || status === 'synced') && !isTeacherVerified) {
+    return {
+      ...base,
+      primaryButton: {
+        text: 'Đã hoàn tất đăng ký',
+        disabled: true,
+        action: 'NONE',
+      },
+      secondaryButton: {
+        visible: true,
+        text: 'Yêu cầu đổi ảnh (Gửi Admin)',
+        action: 'CONTACT_ADMIN',
+      },
+    };
+  }
+  return base;
+}

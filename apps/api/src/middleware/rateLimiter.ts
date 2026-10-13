@@ -47,14 +47,24 @@ export function createRateLimiter(options: RateLimiterOptions) {
       const params = request.params as Record<string, string>;
       let classId: number | null = null;
 
-      if (params.classId) {
-        classId = parseInt(params.classId, 10);
+      if (params.classId || params.classCode) {
+        const rawClass = (params.classId || params.classCode || '').trim();
+        const parsedId = parseInt(rawClass, 10);
+        if (!isNaN(parsedId) && String(parsedId) === rawClass) {
+          classId = parsedId;
+        } else if (rawClass && typeof classRepo.findByCode === 'function') {
+          const cls = await classRepo.findByCode(rawClass.toUpperCase());
+          if (cls) classId = cls.id;
+        }
       } else if (params.studentId) {
         const studentId = parseInt(params.studentId, 10);
         if (!isNaN(studentId)) {
           const student = await studentRepo.findById(studentId);
           if (student) classId = student.class_id;
         }
+      } else if (params.qrToken && typeof studentRepo.findByQrToken === 'function') {
+        const student = await studentRepo.findByQrToken(params.qrToken.trim());
+        if (student) classId = student.class_id;
       }
 
       if (classId) {

@@ -2,80 +2,522 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Cổng Đăng Ký Khuôn Mặt Học Sinh — HANET School</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; margin: 0; padding: 20px; }
-    .card { max-width: 520px; margin: 20px auto; background: #fff; padding: 24px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
-    h2 { margin-top: 0; color: #1a1a1a; text-align: center; }
+    :root {
+      --primary: #0066cc;
+      --primary-hover: #0052a3;
+      --bg: #f0f2f5;
+      --card-bg: #ffffff;
+      --text-main: #1a1a1a;
+      --text-muted: #5f6368;
+      --border: #d1d5db;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text-main);
+      margin: 0;
+      padding: 14px;
+      line-height: 1.45;
+    }
+    .container { max-width: 520px; margin: 0 auto; }
+
+    /* Soft Banner Zalo / WebView */
+    .zalo-banner {
+      display: none;
+      background: #fffbeb;
+      border: 1.5px solid #f59e0b;
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 14px;
+      box-shadow: 0 2px 8px rgba(245, 158, 11, 0.15);
+    }
+    .zalo-banner-title {
+      font-weight: 700;
+      color: #92400e;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .zalo-banner-desc {
+      font-size: 13px;
+      color: #78350f;
+      margin: 0 0 10px 0;
+    }
+    .zalo-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .btn-zalo-open {
+      background: #d97706;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      flex: 1;
+      text-align: center;
+    }
+    .btn-zalo-copy {
+      background: #fff;
+      color: #92400e;
+      border: 1px solid #f59e0b;
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .ios-guide-hint {
+      display: none;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed #fcd34d;
+      font-size: 12px;
+      color: #92400e;
+    }
+
+    /* Main Card */
+    .card {
+      background: var(--card-bg);
+      padding: 20px;
+      border-radius: 14px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.07);
+    }
+    .header-box {
+      text-align: center;
+      border-bottom: 1px solid #f3f4f6;
+      padding-bottom: 14px;
+      margin-bottom: 16px;
+    }
+    h2 {
+      margin: 0 0 6px 0;
+      color: #111827;
+      font-size: 20px;
+    }
+    .class-subtitle {
+      font-size: 14px;
+      font-weight: 600;
+      color: #2563eb;
+      margin: 0;
+    }
+    .teacher-badge {
+      display: none;
+      margin: 8px auto 0;
+      background: #ecfdf5;
+      color: #065f46;
+      border: 1px solid #6ee7b7;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      width: fit-content;
+    }
+    .stats-bar {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+      font-size: 12px;
+      color: #4b5563;
+    }
+
     .form-group { margin-bottom: 16px; }
-    label { display: block; margin-bottom: 6px; font-weight: 600; color: #333; }
-    select, input, textarea, button { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; font-size: 15px; }
-    
-    /* Buttons */
-    .btn-group { display: flex; gap: 10px; margin-top: 15px; }
-    .btn-primary { background: #0066cc; color: #fff; border: none; font-weight: 600; cursor: pointer; flex: 1; padding: 12px; border-radius: 8px; }
-    .btn-primary:disabled { background: #9ca3af; cursor: not-allowed; }
-    .btn-secondary { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; font-weight: 600; cursor: pointer; padding: 12px 18px; border-radius: 8px; white-space: nowrap; }
-    .btn-secondary:hover { background: #e5e7eb; }
-    
-    .status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 20px; font-size: 14px; font-weight: 600; margin-top: 8px; }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 600;
+      color: #374151;
+      font-size: 14px;
+    }
+    .search-input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 14px;
+      margin-bottom: 8px;
+      background: #f9fafb;
+    }
+    select, input, textarea, button {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 15px;
+    }
+
+    /* Status Badges */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-top: 8px;
+    }
     .badge-empty { background: #f3f4f6; color: #4b5563; border: 1px solid #d1d5db; }
     .badge-pending { background: #fef9c3; color: #854d0e; border: 1px solid #facc15; }
     .badge-success { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
     .badge-error { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
     .badge-manual_review { background: #ffedd5; color: #9a3412; border: 1px solid #fdba74; }
 
-    .preview-box { margin-top: 15px; text-align: center; }
-    img { max-width: 100%; max-height: 240px; border-radius: 8px; display: none; margin: 0 auto; }
-    .status-msg { margin-top: 15px; padding: 12px; border-radius: 8px; font-size: 14px; display: none; }
-    .status-msg.success { background: #e6f4ea; color: #137333; }
-    .status-msg.error { background: #fce8e6; color: #c5221f; }
+    .error-detail-box {
+      display: none;
+      margin-top: 8px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #fff1f2;
+      border: 1px solid #fecdd3;
+      color: #be123c;
+      font-size: 13px;
+    }
+    .success-detail-box {
+      display: none;
+      margin-top: 8px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      color: #15803d;
+      font-size: 13px;
+    }
 
-    /* Modal Gửi Admin */
-    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
-    .modal-box { background: #fff; max-width: 440px; width: 100%; padding: 24px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
-    .modal-header { font-size: 18px; font-weight: 700; margin-bottom: 12px; color: #111; }
+    /* Dual Action Photo Capture */
+    .photo-actions-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 6px;
+    }
+    .btn-capture-cam {
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1.5px solid #93c5fd;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 12px 10px;
+      border-radius: 10px;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .btn-capture-cam:disabled {
+      background: #f3f4f6;
+      color: #9ca3af;
+      border-color: #d1d5db;
+      cursor: not-allowed;
+    }
+    .btn-pick-gallery {
+      background: #f9fafb;
+      color: #374151;
+      border: 1.5px solid #d1d5db;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 12px 10px;
+      border-radius: 10px;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    /* Reactive Camera Lock Box */
+    .camera-lock-box {
+      display: none;
+      margin-top: 12px;
+      padding: 14px;
+      border-radius: 10px;
+      background: #fef2f2;
+      border: 1.5px solid #f87171;
+      color: #991b1b;
+      font-size: 13px;
+    }
+    .camera-lock-title {
+      font-weight: 700;
+      font-size: 14px;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Preview & Live WebRTC Box */
+    .preview-box {
+      margin-top: 14px;
+      text-align: center;
+      background: #f8fafc;
+      border: 1.5px dashed #cbd5e1;
+      border-radius: 12px;
+      padding: 12px;
+      min-height: 140px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    #previewImg {
+      max-width: 100%;
+      max-height: 260px;
+      border-radius: 10px;
+      display: none;
+      margin: 0 auto;
+      object-fit: cover;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .preview-placeholder {
+      color: #64748b;
+      font-size: 13px;
+    }
+    .image-meta {
+      display: none;
+      margin-top: 6px;
+      font-size: 12px;
+      color: #059669;
+      font-weight: 600;
+    }
+
+    /* Live WebRTC Camera Modal */
+    .live-cam-box {
+      display: none;
+      margin-top: 10px;
+      background: #000;
+      border-radius: 12px;
+      overflow: hidden;
+      position: relative;
+    }
+    #liveVideo {
+      width: 100%;
+      max-height: 320px;
+      display: block;
+      object-fit: cover;
+    }
+    .face-oval-guide {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -54%);
+      width: 170px;
+      height: 220px;
+      border: 2.5px dashed rgba(255, 255, 255, 0.85);
+      border-radius: 50%;
+      pointer-events: none;
+      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+    }
+    .live-cam-controls {
+      display: flex;
+      gap: 8px;
+      padding: 10px;
+      background: #111827;
+    }
+
+    /* Primary & Secondary Action Buttons */
+    .btn-group { display: flex; gap: 10px; margin-top: 16px; }
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+      flex: 1;
+      padding: 13px;
+      border-radius: 10px;
+    }
+    .btn-primary:disabled { background: #9ca3af; cursor: not-allowed; }
+    .btn-secondary {
+      background: #f3f4f6;
+      color: #374151;
+      border: 1px solid #d1d5db;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 13px 16px;
+      border-radius: 10px;
+      white-space: nowrap;
+      width: auto;
+    }
+    .btn-secondary:hover { background: #e5e7eb; }
+
+    /* Status & Polling Feedback */
+    .status-msg {
+      margin-top: 14px;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      display: none;
+    }
+    .status-msg.success { background: #e6f4ea; color: #137333; border: 1px solid #a8dab5; }
+    .status-msg.error { background: #fce8e6; color: #c5221f; border: 1px solid #f6aea9; }
+    .polling-indicator {
+      display: none;
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      color: #1e40af;
+      font-size: 13px;
+      text-align: center;
+    }
+
+    /* Modal Gửi Admin & Hướng dẫn iOS */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 16px;
+    }
+    .modal-box {
+      background: #fff;
+      max-width: 440px;
+      width: 100%;
+      padding: 22px;
+      border-radius: 14px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.22);
+    }
+    .modal-header { font-size: 17px; font-weight: 700; margin-bottom: 10px; color: #111; }
   </style>
 </head>
 <body>
 
-<div class="card">
-  <h2>Cổng Nộp Ảnh Nhận Diện</h2>
-  
-  <div class="form-group">
-    <label for="studentSelect">Chọn học sinh:</label>
-    <select id="studentSelect">
-      <option value="">-- Đang tải danh sách học sinh --</option>
-    </select>
-    <div id="studentStatusDisplay"></div>
+<div class="container">
+  <!-- 1. Soft Banner Cảnh báo Zalo / In-App WebView -->
+  <div id="zaloBanner" class="zalo-banner">
+    <div class="zalo-banner-title">⚠️ Bạn đang mở trong ứng dụng Zalo / WebView</div>
+    <p class="zalo-banner-desc">
+      Khuyên dùng trình duyệt <strong>Safari (iPhone)</strong> hoặc <strong>Chrome (Android)</strong> để chụp ảnh ổn định và không bị khóa máy ảnh.
+    </p>
+    <div class="zalo-actions">
+      <button type="button" id="openExternalBrowserBtn" class="btn-zalo-open">🌐 Mở trình duyệt ngoài</button>
+      <button type="button" id="copyCurrentLinkBtn" class="btn-zalo-copy">📋 Copy link</button>
+    </div>
+    <div id="iosZaloHint" class="ios-guide-hint">
+      👉 <strong>Trên iPhone/iPad:</strong> Bấm biểu tượng <strong>[•••]</strong> ở góc trên bên phải màn hình Zalo ➔ Chọn <strong>"Mở bằng trình duyệt (Safari)"</strong>.
+    </div>
   </div>
 
-  <div class="form-group" id="photoGroup">
-    <label for="photoInput">Chụp hoặc chọn ảnh chân dung:</label>
-    <input type="file" id="photoInput" accept="image/jpeg,image/png" capture="user">
-  </div>
+  <!-- 2. Thẻ Cổng Đăng Ký Chính -->
+  <div class="card">
+    <div class="header-box">
+      <h2>Cổng Nộp Ảnh Nhận Diện</h2>
+      <p id="classNameTitle" class="class-subtitle">Đang tải thông tin lớp...</p>
+      <div id="teacherBadge" class="teacher-badge">🛡️ Chế độ Giáo viên hỗ trợ (Miễn giới hạn nộp)</div>
+      <div id="classStatsBar" class="stats-bar"></div>
+    </div>
 
-  <div class="preview-box">
-    <img id="previewImg" alt="Xem trước ảnh">
-  </div>
+    <!-- Bước 1: Chọn học sinh -->
+    <div class="form-group">
+      <label for="studentSelect">1. Chọn học sinh:</label>
+      <input
+        type="text"
+        id="studentSearchInput"
+        class="search-input"
+        placeholder="🔍 Gõ tên hoặc mã để lọc nhanh học sinh..."
+        autocomplete="off"
+      >
+      <select id="studentSelect">
+        <option value="">-- Đang tải danh sách học sinh --</option>
+      </select>
+      <div id="studentStatusDisplay"></div>
+      <div id="studentErrorBox" class="error-detail-box"></div>
+      <div id="studentSuccessBox" class="success-detail-box"></div>
+    </div>
 
-  <div class="btn-group">
-    <button id="submitBtn" class="btn-primary" disabled>Đăng ký</button>
-    <button id="contactAdminBtn" class="btn-secondary" style="display: none;">Gửi admin</button>
-  </div>
+    <!-- Bước 2: Chụp hoặc chọn ảnh chân dung (Dual-Source Capture) -->
+    <div class="form-group" id="photoGroup">
+      <label for="photoInput">2. Chụp hoặc chọn ảnh chân dung:</label>
 
-  <div id="statusMsg" class="status-msg"></div>
+      <!-- Input ẩn tách biệt: 1 cho Camera trực tiếp (image/* + capture) & 1 cho Thư viện ảnh (không capture) -->
+      <input type="file" id="photoInput" accept="image/*" capture="user" style="display: none;">
+      <input type="file" id="galleryInput" accept="image/jpeg,image/png,image/webp" style="display: none;">
+
+      <div class="photo-actions-grid">
+        <button type="button" id="openCameraBtn" class="btn-capture-cam">
+          <span>📸 Chụp Máy Ảnh</span>
+        </button>
+        <button type="button" id="openGalleryBtn" class="btn-pick-gallery">
+          <span>🖼️ Chọn Thư Viện</span>
+        </button>
+      </div>
+
+      <!-- Khung ngắm WebRTC Live Camera (chỉ hiện khi HTTPS / localhost hỗ trợ getUserMedia) -->
+      <div id="liveCamBox" class="live-cam-box">
+        <video id="liveVideo" autoplay playsinline muted></video>
+        <div class="face-oval-guide"></div>
+        <div class="live-cam-controls">
+          <button type="button" id="snapLivePhotoBtn" class="btn-primary" style="margin:0;">📸 Chụp ngay</button>
+          <button type="button" id="closeLiveCamBtn" class="btn-secondary" style="margin:0;">Đóng</button>
+        </div>
+      </div>
+
+      <!-- Khung Khóa Phản Ứng (Reactive Camera Lock) khi phát hiện lỗi chụp trong Zalo/WebView -->
+      <div id="cameraLockBox" class="camera-lock-box">
+        <div class="camera-lock-title">🔒 Chức năng chụp trực tiếp đã tạm khóa</div>
+        <div id="cameraLockReason" style="margin-bottom: 10px;">
+          Trình duyệt hiện tại đang chặn quyền máy ảnh hoặc không đọc được ảnh chụp trực tiếp.
+        </div>
+        <div class="zalo-actions">
+          <button type="button" id="lockOpenBrowserBtn" class="btn-zalo-open" style="background:#dc2626;">
+            🚀 Mở Safari / Chrome
+          </button>
+          <button type="button" id="lockPickGalleryBtn" class="btn-zalo-copy" style="border-color:#dc2626;color:#991b1b;">
+            🖼️ Chọn ảnh từ Thư viện
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Khung xem trước ảnh -->
+    <div class="preview-box" id="previewBox">
+      <div id="previewPlaceholder" class="preview-placeholder">
+        👤 Chưa có ảnh được chọn.<br>
+        <small>Chụp chính diện, đủ ánh sáng, không đeo khẩu trang hoặc kính râm.</small>
+      </div>
+      <img id="previewImg" alt="Xem trước ảnh chân dung">
+      <div id="imageMetaInfo" class="image-meta"></div>
+    </div>
+
+    <!-- Nút Hành động Chính & Phụ -->
+    <div class="btn-group">
+      <button id="submitBtn" class="btn-primary" disabled>Đăng ký</button>
+      <button id="contactAdminBtn" class="btn-secondary" style="display: none;">Gửi admin</button>
+    </div>
+
+    <!-- Hiển thị trạng thái & Short Polling 3s -->
+    <div id="pollingIndicator" class="polling-indicator">
+      ⏳ Hệ thống đang xử lý nhận diện khuôn mặt... (Tự động cập nhật mỗi 3 giây)
+    </div>
+    <div id="statusMsg" class="status-msg"></div>
+  </div>
 </div>
 
 <!-- Modal Gửi Admin -->
 <div id="adminModal" class="modal-overlay">
   <div class="modal-box">
     <div class="modal-header">Gửi yêu cầu hỗ trợ tới Quản trị viên</div>
-    <p style="font-size: 14px; color: #555;">Thầy cô / Quản trị viên sẽ kiểm tra và đăng ký trực tiếp cho bạn.</p>
+    <p style="font-size: 14px; color: #555; margin-top: 0;">
+      Thầy cô / Quản trị viên sẽ kiểm tra và duyệt ảnh trực tiếp cho bạn.
+    </p>
     <div class="form-group">
       <label for="adminNote">Ghi chú (tùy chọn):</label>
-      <textarea id="adminNote" rows="3" placeholder="Mô tả sự cố (VD: khuôn mặt không nhận diện được, lỗi mạng...)"></textarea>
+      <textarea id="adminNote" rows="3" placeholder="Mô tả sự cố (VD: khuôn mặt không nhận diện được, cần đổi ảnh mới...)"></textarea>
     </div>
     <div class="btn-group">
       <button id="sendAdminSubmitBtn" class="btn-primary">Gửi ngay</button>
@@ -85,12 +527,78 @@
 </div>
 
 <script>
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 1. TRÍCH XUẤT THAM SỐ ĐỘNG TỪ URL (/l/:classCode?token=PIN_...)
+  // ═══════════════════════════════════════════════════════════════════════════
+  function extractRouteParams() {
+    const pathname = window.location.pathname || '';
+    const searchParams = new URLSearchParams(window.location.search || '');
+
+    // Hỗ trợ /l/GLV0, /c/GLV0 hoặc query ?class=GLV0, fallback '1'
+    let classCode = searchParams.get('class') || searchParams.get('classCode') || '';
+    if (!classCode) {
+      const segments = pathname.split('/').filter(Boolean);
+      if ((segments[0] === 'l' || segments[0] === 'c') && segments[1] && segments[1] !== 'index.html') {
+        classCode = decodeURIComponent(segments[1]);
+      } else if (segments.length === 1 && segments[0] !== 'l' && segments[0] !== 'index.html') {
+        classCode = decodeURIComponent(segments[0]);
+      }
+    }
+    classCode = (classCode || '1').trim();
+
+    const teacherPin = (
+      searchParams.get('token') ||
+      searchParams.get('teacher_pin') ||
+      ''
+    ).trim();
+
+    return { classCode, teacherPin };
+  }
+
+  const { classCode: activeClassCode, teacherPin: activeTeacherPin } = extractRouteParams();
+  const STORAGE_KEY_SELECTED_STUDENT = `tg_selected_student_${activeClassCode}`;
+  const STORAGE_KEY_CAM_PENDING_TS = `tg_cam_pending_ts_${activeClassCode}`;
+  const STORAGE_KEY_CAM_FAIL_COUNT = `tg_cam_fail_${activeClassCode}`;
+
+  // DOM Elements
+  const zaloBanner = document.getElementById('zaloBanner');
+  const iosZaloHint = document.getElementById('iosZaloHint');
+  const openExternalBrowserBtn = document.getElementById('openExternalBrowserBtn');
+  const copyCurrentLinkBtn = document.getElementById('copyCurrentLinkBtn');
+
+  const classNameTitle = document.getElementById('classNameTitle');
+  const teacherBadge = document.getElementById('teacherBadge');
+  const classStatsBar = document.getElementById('classStatsBar');
+
+  const studentSearchInput = document.getElementById('studentSearchInput');
   const studentSelect = document.getElementById('studentSelect');
   const studentStatusDisplay = document.getElementById('studentStatusDisplay');
+  const studentErrorBox = document.getElementById('studentErrorBox');
+  const studentSuccessBox = document.getElementById('studentSuccessBox');
+
+  const photoGroup = document.getElementById('photoGroup');
   const photoInput = document.getElementById('photoInput');
+  const galleryInput = document.getElementById('galleryInput');
+  const openCameraBtn = document.getElementById('openCameraBtn');
+  const openGalleryBtn = document.getElementById('openGalleryBtn');
+
+  const liveCamBox = document.getElementById('liveCamBox');
+  const liveVideo = document.getElementById('liveVideo');
+  const snapLivePhotoBtn = document.getElementById('snapLivePhotoBtn');
+  const closeLiveCamBtn = document.getElementById('closeLiveCamBtn');
+
+  const cameraLockBox = document.getElementById('cameraLockBox');
+  const cameraLockReason = document.getElementById('cameraLockReason');
+  const lockOpenBrowserBtn = document.getElementById('lockOpenBrowserBtn');
+  const lockPickGalleryBtn = document.getElementById('lockPickGalleryBtn');
+
+  const previewPlaceholder = document.getElementById('previewPlaceholder');
+  const previewImg = document.getElementById('previewImg');
+  const imageMetaInfo = document.getElementById('imageMetaInfo');
+
   const submitBtn = document.getElementById('submitBtn');
   const contactAdminBtn = document.getElementById('contactAdminBtn');
-  const previewImg = document.getElementById('previewImg');
+  const pollingIndicator = document.getElementById('pollingIndicator');
   const statusMsg = document.getElementById('statusMsg');
 
   const adminModal = document.getElementById('adminModal');
@@ -98,9 +606,16 @@
   const sendAdminSubmitBtn = document.getElementById('sendAdminSubmitBtn');
   const closeModalBtn = document.getElementById('closeModalBtn');
 
+  // Application State
   let studentsList = [];
   let currentStudent = null;
   let compressedBlob = null;
+  let currentPreviewUrl = null;
+  let isTeacherVerified = false;
+  let isCameraLocked = false;
+  let liveStream = null;
+  let pollingTimer = null;
+  let pollingCount = 0;
 
   // Cấu hình 5 trạng thái chuẩn hóa
   const STATUS_CONFIG = {
@@ -108,7 +623,7 @@
       label: 'Chưa nộp ảnh',
       badgeClass: 'badge-empty',
       dot: '⚪',
-      btnText: 'Đăng ký',
+      btnText: 'Đăng ký ngay',
       disabled: false,
       showSecondary: false
     },
@@ -132,80 +647,516 @@
       label: 'Lỗi xử lý',
       badgeClass: 'badge-error',
       dot: '🔴',
-      btnText: 'Đã xảy ra lỗi',
-      disabled: true,
+      btnText: 'Thử đăng ký lại',
+      disabled: false,
       showSecondary: true
     },
     manual_review: {
-      label: 'Chờ duyệt',
+      label: 'Cần chụp lại / Chờ duyệt',
       badgeClass: 'badge-manual_review',
       dot: '🟠',
-      btnText: 'Chờ duyệt',
-      disabled: true,
+      btnText: 'Nộp lại ảnh khác',
+      disabled: false,
       showSecondary: true
     }
   };
 
-  // 1. Tải danh sách học sinh
-  async function loadStudents() {
-    try {
-      const res = await fetch('/api/classes/1/students');
-      studentsList = await res.json();
-      studentSelect.innerHTML = '<option value="">-- Chọn tên của bạn --</option>';
-      studentsList.forEach(st => {
-        const opt = document.createElement('option');
-        const cfg = STATUS_CONFIG[st.status] || STATUS_CONFIG.empty;
-        opt.value = st.id;
-        opt.textContent = `${cfg.dot} ${st.name} (${cfg.label})`;
-        studentSelect.appendChild(opt);
-      });
-    } catch (err) {
-      showStatus('Không thể tải danh sách học sinh', false);
+  function getEffectiveStatusConfig(status) {
+    const base = STATUS_CONFIG[status] || STATUS_CONFIG.empty;
+    if (status === 'success' && !isTeacherVerified) {
+      return {
+        ...base,
+        btnText: 'Đã hoàn tất đăng ký',
+        disabled: true,
+        showSecondary: true
+      };
+    }
+    if (status === 'success' && isTeacherVerified) {
+      return {
+        ...base,
+        btnText: '🔄 Cập nhật lại hình (GV)',
+        disabled: false,
+        showSecondary: true
+      };
+    }
+    return base;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2. KIỂM TRA TƯƠNG THÍCH ZALO WEBVIEW & ĐIỀU HƯỚNG TRÌNH DUYỆT NGOÀI
+  // ═══════════════════════════════════════════════════════════════════════════
+  const ua = navigator.userAgent || '';
+  const isZalo = /Zalo|ZaloPC/i.test(ua);
+  const isInAppWebView = isZalo || /FBAN|FBAV|Messenger|Instagram|Line/i.test(ua);
+  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/i.test(ua);
+
+  function initEnvironmentCheck() {
+    if (isInAppWebView) {
+      zaloBanner.style.display = 'block';
+      if (isIOS) {
+        iosZaloHint.style.display = 'block';
+      }
     }
   }
 
-  // 2. Cập nhật giao diện khi chọn học sinh
-  studentSelect.addEventListener('change', () => {
+  function openInExternalBrowser() {
+    const targetUrl = window.location.href;
+    if (isAndroid) {
+      const cleanUrl = targetUrl.replace(/^https?:\/\//i, '');
+      const scheme = window.location.protocol.replace(':', '') || 'http';
+      const intentUrl = `intent://${cleanUrl}#Intent;scheme=${scheme};package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(targetUrl)};end`;
+      window.location.href = intentUrl;
+      return;
+    }
+    // Trên iOS hoặc thiết bị khác: hiển thị hướng dẫn mở bằng Safari và tự copy link
+    iosZaloHint.style.display = 'block';
+    copyCurrentUrlToClipboard(true);
+  }
+
+  function copyCurrentUrlToClipboard(showGuideAlert) {
+    const url = window.location.href;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(() => {
+        showStatus(
+          showGuideAlert
+            ? 'Đã sao chép đường dẫn! Hãy mở trình duyệt Safari/Chrome và dán (Paste) đường dẫn để chụp ảnh.'
+            : 'Đã sao chép đường dẫn lớp học vào bộ nhớ tạm!',
+          true
+        );
+      }).catch(() => fallbackCopyText(url));
+    } else {
+      fallbackCopyText(url);
+    }
+  }
+
+  function fallbackCopyText(text) {
+    const input = document.createElement('input');
+    input.value = text;
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand('copy');
+    document.body.removeChild(input);
+    showStatus('Đã sao chép đường dẫn! Hãy dán vào trình duyệt Safari hoặc Chrome.', true);
+  }
+
+  openExternalBrowserBtn.addEventListener('click', openInExternalBrowser);
+  lockOpenBrowserBtn.addEventListener('click', openInExternalBrowser);
+  copyCurrentLinkBtn.addEventListener('click', () => copyCurrentUrlToClipboard(false));
+
+  // Khóa Phản Ứng (Reactive Camera Lock) khi chụp hình lỗi
+  function triggerCameraLock(reasonText) {
+    isCameraLocked = true;
+    stopLiveCamera();
+    openCameraBtn.disabled = true;
+    openCameraBtn.innerHTML = '<span>🔒 Máy ảnh đã khóa</span>';
+    if (reasonText) {
+      cameraLockReason.textContent = reasonText;
+    }
+    cameraLockBox.style.display = 'block';
+  }
+
+  lockPickGalleryBtn.addEventListener('click', () => {
+    galleryInput.value = '';
+    galleryInput.click();
+  });
+
+  // Phát hiện trường hợp Zalo Android nuốt sự kiện onchange khi quay về từ Camera
+  window.addEventListener('focus', () => {
+    const pendingTs = sessionStorage.getItem(STORAGE_KEY_CAM_PENDING_TS);
+    if (!pendingTs) return;
+    setTimeout(() => {
+      const stillPending = sessionStorage.getItem(STORAGE_KEY_CAM_PENDING_TS);
+      if (stillPending && (!photoInput.files || photoInput.files.length === 0)) {
+        sessionStorage.removeItem(STORAGE_KEY_CAM_PENDING_TS);
+        const failCount = parseInt(sessionStorage.getItem(STORAGE_KEY_CAM_FAIL_COUNT) || '0', 10) + 1;
+        sessionStorage.setItem(STORAGE_KEY_CAM_FAIL_COUNT, String(failCount));
+        if (isInAppWebView || failCount >= 2) {
+          triggerCameraLock(
+            'Ứng dụng Zalo/Trình duyệt đã chặn hoặc làm mất ảnh vừa chụp từ Camera. Vui lòng mở bằng trình duyệt Safari/Chrome hoặc chọn ảnh có sẵn từ Thư viện.'
+          );
+        }
+      }
+    }, 1500);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 3. TẢI DANH SÁCH HỌC SINH & GIẢI MÃ HEADER AN TOÀN (RFC 7230 / URI SAFE)
+  // ═══════════════════════════════════════════════════════════════════════════
+  function safeDecodeClassName(rawHeader, fallbackCode) {
+    if (!rawHeader || !String(rawHeader).trim()) {
+      return fallbackCode;
+    }
+    try {
+      const decoded = decodeURIComponent(String(rawHeader).trim());
+      return decoded || fallbackCode;
+    } catch (decodeErr) {
+      console.warn('[HEADER] Lỗi giải mã X-Class-Name, dùng fallback:', decodeErr);
+      return String(rawHeader).trim() || fallbackCode;
+    }
+  }
+
+  async function loadStudents(silentPolling = false) {
+    try {
+      const headers = {};
+      if (activeTeacherPin) {
+        headers['x-teacher-pin'] = activeTeacherPin;
+      }
+
+      const querySuffix = activeTeacherPin ? `?token=${encodeURIComponent(activeTeacherPin)}` : '';
+      const res = await fetch(`/api/classes/${encodeURIComponent(activeClassCode)}/students${querySuffix}`, {
+        headers
+      });
+
+      if (!res.ok) {
+        let errData = {};
+        try { errData = await res.json(); } catch {}
+        throw new Error(errData.message || `Không thể tải danh sách lớp (${res.status})`);
+      }
+
+      // Đọc và giải mã an toàn 3 Custom Headers
+      const headerClassCode = res.headers.get('X-Class-Code') || activeClassCode;
+      const rawClassName = res.headers.get('X-Class-Name') || '';
+      const resolvedClassName = safeDecodeClassName(rawClassName, headerClassCode);
+      isTeacherVerified = res.headers.get('X-Teacher-Verified') === 'true';
+
+      classNameTitle.textContent =
+        resolvedClassName && resolvedClassName !== headerClassCode
+          ? `Lớp: ${resolvedClassName} (${headerClassCode})`
+          : `Lớp: ${headerClassCode}`;
+
+      teacherBadge.style.display = isTeacherVerified ? 'block' : 'none';
+
+      studentsList = await res.json();
+      renderClassStats(studentsList);
+      renderStudentOptions(studentSearchInput.value);
+
+      // Khôi phục học sinh đang chọn từ bộ nhớ hoặc sessionStorage
+      const savedId = currentStudent
+        ? String(currentStudent.id)
+        : sessionStorage.getItem(STORAGE_KEY_SELECTED_STUDENT);
+
+      if (savedId) {
+        const matched = studentsList.find(s => String(s.id) === String(savedId));
+        if (matched) {
+          studentSelect.value = String(matched.id);
+          onStudentSelectionChanged(silentPolling);
+        }
+      }
+    } catch (err) {
+      if (!silentPolling) {
+        classNameTitle.textContent = `Lớp: ${activeClassCode}`;
+        showStatus(err.message || 'Không thể tải danh sách học sinh', false);
+      }
+    }
+  }
+
+  function renderClassStats(list) {
+    if (!Array.isArray(list) || list.length === 0) {
+      classStatsBar.innerHTML = '';
+      return;
+    }
+    const total = list.length;
+    const done = list.filter(s => s.status === 'success').length;
+    const pending = list.filter(s => s.status === 'pending' || s.is_updating).length;
+    const empty = list.filter(s => s.status === 'empty').length;
+    classStatsBar.innerHTML = `
+      <span>Sĩ số: <strong>${total}</strong></span>
+      <span>🟢 Xong: <strong>${done}</strong></span>
+      <span>🟡 Chờ: <strong>${pending}</strong></span>
+      <span>⚪ Chưa nộp: <strong>${empty}</strong></span>
+    `;
+  }
+
+  function renderStudentOptions(filterKeyword = '') {
+    const keyword = (filterKeyword || '').trim().toLowerCase();
+    const previousValue = studentSelect.value;
+
+    studentSelect.innerHTML = '<option value="">-- Chọn tên của bạn --</option>';
+    studentsList.forEach(st => {
+      if (keyword) {
+        const hay = `${st.name || ''} ${st.alias_id || ''}`.toLowerCase();
+        if (!hay.includes(keyword)) return;
+      }
+      const opt = document.createElement('option');
+      const cfg = STATUS_CONFIG[st.status] || STATUS_CONFIG.empty;
+      opt.value = st.id;
+      opt.textContent = `${cfg.dot} ${st.name} (${cfg.label})`;
+      studentSelect.appendChild(opt);
+    });
+
+    if (previousValue && Array.from(studentSelect.options).some(o => o.value === previousValue)) {
+      studentSelect.value = previousValue;
+    }
+  }
+
+  studentSearchInput.addEventListener('input', () => {
+    renderStudentOptions(studentSearchInput.value);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 4. CẬP NHẬT GIAO DIỆN KHI CHỌN HỌC SINH & QUẢN LÝ SHORT POLLING (3s/LẦN)
+  // ═══════════════════════════════════════════════════════════════════════════
+  function onStudentSelectionChanged(isFromPolling = false) {
     const selectedId = parseInt(studentSelect.value, 10);
+    const prevStatus = currentStudent ? currentStudent.status : null;
     currentStudent = studentsList.find(s => s.id === selectedId) || null;
 
     if (!currentStudent) {
+      sessionStorage.removeItem(STORAGE_KEY_SELECTED_STUDENT);
       studentStatusDisplay.innerHTML = '';
+      studentErrorBox.style.display = 'none';
+      studentSuccessBox.style.display = 'none';
       submitBtn.disabled = true;
       submitBtn.textContent = 'Đăng ký';
       contactAdminBtn.style.display = 'none';
+      stopPolling();
       return;
     }
 
-    const cfg = STATUS_CONFIG[currentStudent.status] || STATUS_CONFIG.empty;
+    sessionStorage.setItem(STORAGE_KEY_SELECTED_STUDENT, String(currentStudent.id));
+
+    const cfg = getEffectiveStatusConfig(currentStudent.status);
     studentStatusDisplay.innerHTML = `
       <div class="status-badge ${cfg.badgeClass}">
         <span>${cfg.dot}</span>
-        <span>${cfg.label}</span>
+        <span>${cfg.label}${currentStudent.is_updating ? ' (Đang cập nhật ảnh...)' : ''}</span>
       </div>
     `;
 
+    // Hiển thị chi tiết lỗi AI nếu có (error / manual_review)
+    if (
+      (currentStudent.status === 'error' || currentStudent.status === 'manual_review') &&
+      (currentStudent.last_error_message || currentStudent.last_error_code)
+    ) {
+      const codeStr = currentStudent.last_error_code ? ` (Mã: ${currentStudent.last_error_code})` : '';
+      studentErrorBox.textContent = `⚠️ Lý do cần chụp lại${codeStr}: ${currentStudent.last_error_message || 'Khuôn mặt chưa rõ hoặc ảnh không hợp lệ.'}`;
+      studentErrorBox.style.display = 'block';
+    } else {
+      studentErrorBox.style.display = 'none';
+    }
+
+    // Hiển thị thông tin khi đã hoàn tất (success)
+    if (currentStudent.status === 'success') {
+      const aliasInfo = currentStudent.alias_id ? `Mã định danh: ${currentStudent.alias_id}` : 'Đã ghi nhận trên hệ thống';
+      studentSuccessBox.innerHTML = isTeacherVerified
+        ? `✅ <strong>Học sinh đã đăng ký thành công</strong> (${aliasInfo}).<br>Giáo viên có thể chọn ảnh mới để cập nhật đè.`
+        : `✅ <strong>Học sinh đã hoàn tất đăng ký</strong> (${aliasInfo}).<br>Để tránh chụp đè nhầm tên, chức năng tự nộp lại đã khóa. Nếu cần đổi ảnh, vui lòng bấm nút <strong>"Yêu cầu đổi ảnh (Gửi Admin)"</strong>.`;
+      studentSuccessBox.style.display = 'block';
+    } else {
+      studentSuccessBox.style.display = 'none';
+    }
+
+    // Tự động hiển thị ảnh đã có của học sinh nếu người dùng chưa chọn ảnh mới từ máy
+    if (!compressedBlob) {
+      const existingImgUrl = currentStudent.face_url || (currentStudent.alias_id ? `/images/${currentStudent.alias_id}.jpg` : '');
+      if (existingImgUrl) {
+        previewImg.src = existingImgUrl;
+        previewImg.style.display = 'block';
+        previewPlaceholder.style.display = 'none';
+        previewImg.onerror = () => {
+          previewImg.style.display = 'none';
+          previewPlaceholder.style.display = 'block';
+        };
+      } else {
+        previewImg.style.display = 'none';
+        previewPlaceholder.style.display = 'block';
+      }
+    }
+
+    // Khóa/Mở khu vực chụp ảnh nếu học sinh đã success và không phải Giáo viên
+    const lockPhotoInputs = currentStudent.status === 'success' && !isTeacherVerified;
+    photoGroup.style.opacity = lockPhotoInputs ? '0.6' : '1';
+
     submitBtn.textContent = cfg.btnText;
     contactAdminBtn.style.display = cfg.showSecondary ? 'block' : 'none';
+    contactAdminBtn.textContent =
+      currentStudent.status === 'success' && !isTeacherVerified
+        ? 'Yêu cầu đổi ảnh (Gửi Admin)'
+        : 'Gửi admin';
+
+    // Nếu vừa chuyển từ pending sang trạng thái cuối khi đang polling -> Báo kết quả rõ ràng
+    if (isFromPolling && prevStatus === 'pending' && currentStudent.status !== 'pending') {
+      if (currentStudent.status === 'success') {
+        showStatus('🎉 Chúc mừng! Khuôn mặt của bạn đã được AI nhận diện và đăng ký thành công!', true);
+      } else {
+        showStatus(
+          currentStudent.last_error_message ||
+            '⚠️ Ảnh chưa đạt chuẩn nhận diện. Vui lòng chụp lại ảnh rõ mặt hơn hoặc bấm Gửi Admin.',
+          false
+        );
+      }
+    }
+
+    // Điều khiển vòng lặp Short Polling (3 giây/lần khi pending hoặc is_updating)
+    if (currentStudent.status === 'pending' || currentStudent.is_updating) {
+      startPolling();
+    } else {
+      stopPolling();
+    }
 
     validateForm();
+  }
+
+  studentSelect.addEventListener('change', () => {
+    // Khi đổi sang học sinh khác, xóa blob ảnh cũ đang chọn để tránh nộp nhầm ảnh của bạn trước
+    clearSelectedPhotoBlob();
+    statusMsg.style.display = 'none';
+    onStudentSelectionChanged(false);
   });
 
-  // 3. Client-side Image Pre-compression (Canvas)
-  photoInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  function startPolling() {
+    pollingIndicator.style.display = 'block';
+    if (pollingTimer) return;
+    pollingCount = 0;
+    pollingTimer = setInterval(async () => {
+      if (document.hidden) return;
+      pollingCount++;
+      if (pollingCount > 100) {
+        stopPolling();
+        return;
+      }
+      await loadStudents(true);
+    }, 3000);
+  }
 
+  function stopPolling() {
+    pollingIndicator.style.display = 'none';
+    if (pollingTimer) {
+      clearInterval(pollingTimer);
+      pollingTimer = null;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 5. BẬT CAMERA HYBRID & NÉN ẢNH CANVAS (ZERO MEMORY LEAK)
+  // ═══════════════════════════════════════════════════════════════════════════
+  function clearSelectedPhotoBlob() {
+    compressedBlob = null;
+    if (currentPreviewUrl) {
+      URL.revokeObjectURL(currentPreviewUrl);
+      currentPreviewUrl = null;
+    }
+    imageMetaInfo.style.display = 'none';
+    photoInput.value = '';
+    galleryInput.value = '';
+  }
+
+  openCameraBtn.addEventListener('click', async () => {
+    if (isCameraLocked) return;
+
+    // Phương án A (Hybrid): Nếu chạy trên HTTPS/localhost hỗ trợ WebRTC getUserMedia và không phải Zalo WebView
+    if (
+      window.isSecureContext &&
+      !isInAppWebView &&
+      navigator.mediaDevices &&
+      typeof navigator.mediaDevices.getUserMedia === 'function'
+    ) {
+      try {
+        liveStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        liveVideo.srcObject = liveStream;
+        liveCamBox.style.display = 'block';
+        return;
+      } catch (camErr) {
+        console.warn('[CAMERA] Không thể mở WebRTC stream, chuyển sang input file capture:', camErr);
+      }
+    }
+
+    // Fallback chuẩn cho HTTP LAN (http://192.168.1.51:8090) & Mobile: Mở ứng dụng Camera gốc
+    sessionStorage.setItem(STORAGE_KEY_CAM_PENDING_TS, String(Date.now()));
+    photoInput.value = '';
+    photoInput.click();
+  });
+
+  openGalleryBtn.addEventListener('click', () => {
+    stopLiveCamera();
+    galleryInput.value = '';
+    galleryInput.click();
+  });
+
+  function stopLiveCamera() {
+    if (liveStream) {
+      liveStream.getTracks().forEach(track => track.stop());
+      liveStream = null;
+    }
+    liveCamBox.style.display = 'none';
+  }
+
+  closeLiveCamBtn.addEventListener('click', stopLiveCamera);
+
+  snapLivePhotoBtn.addEventListener('click', () => {
+    if (!liveVideo.videoWidth) return;
+    const canvas = document.createElement('canvas');
+    const MAX_SIDE = 1920;
+    let width = liveVideo.videoWidth;
+    let height = liveVideo.videoHeight;
+    if (width > MAX_SIDE || height > MAX_SIDE) {
+      if (width >= height) {
+        height = Math.round((height * MAX_SIDE) / width);
+        width = MAX_SIDE;
+      } else {
+        width = Math.round((width * MAX_SIDE) / height);
+        height = MAX_SIDE;
+      }
+    }
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(liveVideo, 0, 0, width, height);
+    stopLiveCamera();
+    finalizeCanvasCompression(canvas, width, height);
+  });
+
+  function handleFileInputChange(file, isFromCameraCapture) {
+    sessionStorage.removeItem(STORAGE_KEY_CAM_PENDING_TS);
+
+    if (!file) {
+      if (isFromCameraCapture && isInAppWebView) {
+        triggerCameraLock('Zalo không trả về dữ liệu ảnh từ máy ảnh. Vui lòng mở bằng trình duyệt ngoài hoặc chọn ảnh từ Thư viện.');
+      }
+      return;
+    }
+
+    if (file.size === 0) {
+      triggerCameraLock('Ảnh chụp trả về có dung lượng 0 byte (do trình duyệt Zalo chặn quyền Camera). Vui lòng mở bằng Safari/Chrome hoặc chọn từ Thư viện.');
+      showStatus('Không thể đọc ảnh từ máy ảnh (0 byte). Đã bật chế độ chọn từ Thư viện.', false);
+      return;
+    }
+
+    // Kiểm tra định dạng HEIC/HEIF của iPhone
+    const lowerName = (file.name || '').toLowerCase();
+    const isHeic = lowerName.endsWith('.heic') || lowerName.endsWith('.heif') || /heic|heif/i.test(file.type || '');
+
+    const objectUrl = URL.createObjectURL(file);
     const img = new Image();
+
     img.onload = () => {
+      // Giải phóng ngay lập tức ObjectURL gốc (8-12MB) để chống tràn RAM (OOM)
+      URL.revokeObjectURL(objectUrl);
+
+      if (!img.width || !img.height) {
+        triggerCameraLock('Không thể giải mã kích thước ảnh. Vui lòng chọn ảnh JPEG/PNG từ Thư viện hoặc mở bằng Safari/Chrome.');
+        return;
+      }
+
+      sessionStorage.setItem(STORAGE_KEY_CAM_FAIL_COUNT, '0');
+
       const canvas = document.createElement('canvas');
-      const MAX_WIDTH = 1920;
+      const MAX_SIDE = 1920;
       let width = img.width;
       let height = img.height;
 
-      if (width > MAX_WIDTH) {
-        height = Math.round((height * MAX_WIDTH) / width);
-        width = MAX_WIDTH;
+      if (width > MAX_SIDE || height > MAX_SIDE) {
+        if (width >= height) {
+          height = Math.round((height * MAX_SIDE) / width);
+          width = MAX_SIDE;
+        } else {
+          width = Math.round((width * MAX_SIDE) / height);
+          height = MAX_SIDE;
+        }
       }
 
       canvas.width = width;
@@ -213,14 +1164,50 @@
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, width, height);
 
-      canvas.toBlob((blob) => {
-        compressedBlob = blob;
-        previewImg.src = URL.createObjectURL(blob);
-        previewImg.style.display = 'block';
-        validateForm();
-      }, 'image/jpeg', 0.85);
+      finalizeCanvasCompression(canvas, width, height);
     };
-    img.src = URL.createObjectURL(file);
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      const reason = isHeic
+        ? 'Ảnh định dạng HEIC (iPhone) không tương thích trong trình duyệt Zalo. Hãy mở bằng trình duyệt Safari hoặc chọn ảnh JPEG/PNG.'
+        : 'Trình duyệt không thể đọc tệp ảnh vừa chụp. Vui lòng mở bằng Safari/Chrome hoặc chọn ảnh có sẵn từ Thư viện.';
+      triggerCameraLock(reason);
+      showStatus(reason, false);
+    };
+
+    img.src = objectUrl;
+  }
+
+  function finalizeCanvasCompression(canvas, width, height) {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        showStatus('Lỗi khi nén ảnh chân dung. Vui lòng thử lại.', false);
+        return;
+      }
+      if (currentPreviewUrl) {
+        URL.revokeObjectURL(currentPreviewUrl);
+      }
+      compressedBlob = blob;
+      currentPreviewUrl = URL.createObjectURL(blob);
+      previewImg.src = currentPreviewUrl;
+      previewImg.style.display = 'block';
+      previewPlaceholder.style.display = 'none';
+
+      const sizeKB = Math.round(blob.size / 1024);
+      imageMetaInfo.textContent = `✔ Ảnh hợp lệ (${width}×${height}px • ${sizeKB} KB)`;
+      imageMetaInfo.style.display = 'block';
+
+      validateForm();
+    }, 'image/jpeg', 0.85);
+  }
+
+  photoInput.addEventListener('change', (e) => {
+    handleFileInputChange(e.target.files && e.target.files[0], true);
+  });
+
+  galleryInput.addEventListener('change', (e) => {
+    handleFileInputChange(e.target.files && e.target.files[0], false);
   });
 
   function validateForm() {
@@ -228,8 +1215,8 @@
       submitBtn.disabled = true;
       return;
     }
-    const cfg = STATUS_CONFIG[currentStudent.status] || STATUS_CONFIG.empty;
-    if (cfg.disabled) {
+    const cfg = getEffectiveStatusConfig(currentStudent.status);
+    if (cfg.disabled || currentStudent.is_updating) {
       submitBtn.disabled = true;
     } else {
       submitBtn.disabled = !(currentStudent && compressedBlob);
@@ -242,36 +1229,49 @@
     statusMsg.style.display = 'block';
   }
 
-  // 4. Nộp ảnh nhận diện (Nút chính)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 6. NỘP ẢNH NHẬN DIỆN (KÈM HEADER x-teacher-pin) & GỬI YÊU CẦU ADMIN
+  // ═══════════════════════════════════════════════════════════════════════════
   submitBtn.addEventListener('click', async () => {
     if (!currentStudent || !compressedBlob) return;
     submitBtn.disabled = true;
-    showStatus('Đang tải ảnh lên...', true);
+    showStatus('Đang tải ảnh lên máy chủ...', true);
 
     const formData = new FormData();
     formData.append('file', compressedBlob, 'student_photo.jpg');
 
+    const headers = {};
+    if (activeTeacherPin) {
+      headers['x-teacher-pin'] = activeTeacherPin;
+    }
+    const querySuffix = activeTeacherPin ? `?token=${encodeURIComponent(activeTeacherPin)}` : '';
+
     try {
-      const res = await fetch(`/api/students/${currentStudent.id}/photo`, {
+      const res = await fetch(`/api/students/${currentStudent.id}/photo${querySuffix}`, {
         method: 'POST',
+        headers,
         body: formData
       });
       const result = await res.json();
 
       if (res.ok) {
-        showStatus('Đã gửi ảnh thành công! Hệ thống đang xếp hàng xử lý.', true);
-        await loadStudents();
+        showStatus(
+          result.message || 'Đã gửi ảnh thành công! Hệ thống đang xếp hàng xử lý.',
+          true
+        );
+        await loadStudents(true);
+        startPolling();
       } else {
-        showStatus(result.message || 'Lỗi khi nộp ảnh', false);
+        showStatus(result.message || 'Lỗi khi nộp ảnh nhận diện', false);
         validateForm();
       }
     } catch (err) {
-      showStatus('Lỗi kết nối máy chủ', false);
+      showStatus('Lỗi kết nối máy chủ. Vui lòng kiểm tra mạng Wi-Fi/4G.', false);
       validateForm();
     }
   });
 
-  // 5. Nút phụ: Gửi Admin
+  // Nút phụ: Gửi Admin hỗ trợ (Hỗ trợ đầy đủ student_id, qr_token, alias_id)
   contactAdminBtn.addEventListener('click', () => {
     adminModal.style.display = 'flex';
   });
@@ -283,14 +1283,20 @@
   sendAdminSubmitBtn.addEventListener('click', async () => {
     if (!currentStudent) return;
     if (!compressedBlob) {
-      alert('Vui lòng chụp hoặc chọn ảnh chân dung trước khi gửi yêu cầu hỗ trợ.');
+      alert('Vui lòng chụp hoặc chọn ảnh chân dung từ Thư viện trước khi gửi yêu cầu hỗ trợ.');
       return;
     }
 
     sendAdminSubmitBtn.disabled = true;
     const formData = new FormData();
     formData.append('file', compressedBlob, 'support_photo.jpg');
-    formData.append('alias_id', currentStudent.alias_id);
+    formData.append('student_id', String(currentStudent.id));
+    if (currentStudent.qr_token) {
+      formData.append('qr_token', currentStudent.qr_token);
+    }
+    if (currentStudent.alias_id) {
+      formData.append('alias_id', currentStudent.alias_id);
+    }
     formData.append('student_name', currentStudent.name);
     formData.append('note', adminNote.value || '');
 
@@ -315,7 +1321,9 @@
     }
   });
 
-  loadStudents();
+  // Khởi chạy ứng dụng
+  initEnvironmentCheck();
+  loadStudents(false);
 </script>
 </body>
 </html>
