@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS students (
     id SERIAL PRIMARY KEY,
     class_id INT REFERENCES classes(id) ON DELETE SET NULL, -- Cho phép NULL khi chưa map được prefix
     name VARCHAR(255) NOT NULL,                 -- Họ và tên học sinh
+    normalized_name VARCHAR(255),               -- Họ tên chuẩn hóa chữ thường không dấu phục vụ đối soát
     qr_token VARCHAR(32) UNIQUE NOT NULL,       -- Chuỗi định danh cố định 16 ký tự URL-safe
     alias_id VARCHAR(100) UNIQUE,               -- Cho phép NULL khi khởi tạo từ Excel; chuẩn 9 ký tự khi có person_id
     status student_status DEFAULT 'empty',      -- Trạng thái máy trạng thái
@@ -63,14 +64,18 @@ CREATE TABLE IF NOT EXISTS staging_cloud_faces (
     id SERIAL PRIMARY KEY,
     person_id VARCHAR(100) UNIQUE NOT NULL,
     raw_alias VARCHAR(100) NOT NULL,
-    raw_name VARCHAR(255) NOT NULL,
+    full_name VARCHAR(255),
+    raw_name VARCHAR(255),
     normalized_name VARCHAR(255) NOT NULL,
     face_url TEXT,
     target_class_code VARCHAR(50),
     target_class_id INT REFERENCES classes(id) ON DELETE SET NULL,
     department_id VARCHAR(50),
+    is_matched BOOLEAN DEFAULT FALSE,
+    matched_student_id INT REFERENCES students(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
 
 -- Bảng đối soát xung đột đồng bộ (sync_conflicts)
 CREATE TABLE IF NOT EXISTS sync_conflicts (

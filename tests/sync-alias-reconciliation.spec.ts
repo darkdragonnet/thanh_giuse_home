@@ -733,6 +733,56 @@ describe('Kiểm thử Hệ thống Đối Soát & Đồng Bộ AliasID (Phase 4
       expect(capturedSql).toContain('cloud_alias_synced');
       expect(capturedSql).toContain("INTERVAL '30 seconds'");
     });
+
+    it('executeStage1SnapshotAndSeed chế độ Offline 100% (không truyền cloudSnapshotFaces) phải bảo toàn staging_cloud_faces và bỏ qua học sinh trùng (Idempotent Skip)', async () => {
+      const { executeStage1SnapshotAndSeed } = await import('../packages/shared-infra/src/seeds/snapshot-and-seed.js');
+      const executedQueries: string[] = [];
+
+      const mockClient = {
+        query: vi.fn().mockImplementation(async (sql: string) => {
+          executedQueries.push(sql.trim());
+          if (sql.includes('INSERT INTO classes')) {
+            return { rows: [], rowCount: 1 };
+          }
+          if (sql.includes('SELECT id, code FROM classes')) {
+            return { rows: [{ id: 1, code: 'KT1A' }], rowCount: 1 };
+          }
+          if (sql.includes('SELECT class_id, normalized_name')) {
+            // Giả lập học sinh "Phêrô Nguyễn Văn A" (normalized_name NFC lowercase) đã có sẵn trong lớp KT1A (id=1)
+            return {
+              rows: [{ class_id: 1, normalized_name: 'phêrô nguyễn văn a' }],
+              rowCount: 1,
+            };
+          }
+          if (sql.includes('WITH unique_excel_students')) {
+            return { rows: [], rowCount: 0 };
+          }
+          return { rows: [], rowCount: 0 };
+        }),
+        release: vi.fn(),
+      };
+
+      const mockPool: any = {
+        connect: vi.fn().mockResolvedValue(mockClient),
+      };
+
+      // Gọi với 3 dòng Excel: 2 dòng trùng nhau "Phêrô Nguyễn Văn A" (và đã có trong DB) + 1 dòng mới "Maria Trần Thị B"
+      const summary = await executeStage1SnapshotAndSeed(mockPool, [
+        { classCode: 'KT1A', name: 'Phêrô Nguyễn Văn A' },
+        { classCode: 'KT1A', name: 'Phêrô   Nguyễn Văn A' }, // Trùng trong file Excel
+        { classCode: 'KT1A', name: 'Maria Trần Thị B' }, // Học sinh mới
+      ]);
+
+      // 1. Không được TRUNCATE bảng staging_cloud_faces khi gọi Offline 100% từ Web UI
+      expect(executedQueries.some((q) => q.includes('TRUNCATE TABLE staging_cloud_faces'))).toBe(false);
+
+      // 2. Phải bỏ qua 2 dòng trùng (1 dòng trùng trong file + 1 dòng đã tồn tại trong DB) và chỉ INSERT 1 học sinh mới
+      expect(summary.totalExcelInput).toBe(3);
+      expect(summary.skippedDuplicateCount).toBe(2);
+      expect(summary.insertedStudentsCount).toBe(1);
+      expect(summary.classesCreatedCount).toBe(1);
+      expect(summary.emptyNewStudentsCount).toBe(1);
+    });
   });
 });
 

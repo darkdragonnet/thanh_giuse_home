@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { SyncProgressDrawer } from './SyncProgressDrawer';
 import { ManualReviewModal, ConflictItem } from './ManualReviewModal';
+import { BatchSeedModal } from './BatchSeedModal';
 
 const ERROR_BADGE_MAP: Record<CloudErrorCode, { label: string; color: string }> = {
   ERR_EMPTY_ALIAS: { label: 'Trống mã', color: 'bg-rose-100 text-rose-800 border-rose-300' },
@@ -50,6 +51,7 @@ export const CloudFaceInspectorTab: React.FC = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [reconcileLoading, setReconcileLoading] = useState(false);
   const [manualReviewOpen, setManualReviewOpen] = useState(false);
+  const [isBatchSeedOpen, setIsBatchSeedOpen] = useState(false);
   const [conflictsList, setConflictsList] = useState<ConflictItem[]>([]);
   const [selectedPersonIds, setSelectedPersonIds] = useState<Set<string>>(new Set());
 
@@ -355,7 +357,14 @@ export const CloudFaceInspectorTab: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setIsBatchSeedOpen(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-xs font-semibold text-white shadow-sm transition"
+          >
+            <span>⚡</span>
+            <span>Nạp Hàng Loạt Giai Đoạn 1 (1.200 em)</span>
+          </button>
           <button
             onClick={handleReconcileCloud}
             disabled={reconcileLoading}
@@ -937,6 +946,13 @@ export const CloudFaceInspectorTab: React.FC = () => {
         isOpen={manualReviewOpen}
         conflicts={conflictsList}
         onClose={() => setManualReviewOpen(false)}
+      />
+
+      {/* Modal Nạp Hàng Loạt Giai Đoạn 1 (1.200 em) */}
+      <BatchSeedModal
+        isOpen={isBatchSeedOpen}
+        onClose={() => setIsBatchSeedOpen(false)}
+        onSuccess={() => fetchData(false)}
       />
     </div>
   );

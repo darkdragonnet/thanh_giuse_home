@@ -5,6 +5,7 @@ import * as Switch from '@radix-ui/react-switch';
 import { QrCode, Copy, Download, Search, Check, Plus, Users } from 'lucide-react';
 import { CreateClassModal } from './CreateClassModal';
 import { ClassStudentsModal } from './ClassStudentsModal';
+import { BatchSeedModal } from '../hanet/BatchSeedModal';
 
 interface ClassItem {
   id: number;
@@ -27,6 +28,7 @@ export const ClassesTab: React.FC = () => {
   const [selectedQR, setSelectedQR] = useState<{ code: string; token: string } | null>(null);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isBatchSeedOpen, setIsBatchSeedOpen] = useState(false);
   const [selectedClassForStudents, setSelectedClassForStudents] = useState<ClassItem | null>(null);
 
   const fetchClasses = async () => {
@@ -72,7 +74,7 @@ export const ClassesTab: React.FC = () => {
   return (
     <div className="space-y-4">
       {/* Search & Actions */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="relative w-72">
           <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
           <input
@@ -84,13 +86,23 @@ export const ClassesTab: React.FC = () => {
           />
         </div>
 
-        <button
-          onClick={() => setIsCreateOpen(true)}
-          className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 transition-colors"
-        >
-          <Plus className="h-4 w-4" />
-          Tạo Lớp Mới
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setIsBatchSeedOpen(true)}
+            className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-semibold text-sm rounded-lg shadow-sm transition"
+          >
+            <span>⚡</span>
+            <span>Nạp Hàng Loạt Giai Đoạn 1 (1.200 em)</span>
+          </button>
+
+          <button
+            onClick={() => setIsCreateOpen(true)}
+            className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 transition-colors"
+          >
+            <Plus className="h-4 w-4" />
+            Tạo Lớp Mới
+          </button>
+        </div>
       </div>
 
       {/* Table */}
@@ -252,6 +264,13 @@ export const ClassesTab: React.FC = () => {
         onOpenChange={(open) => !open && setSelectedClassForStudents(null)}
         classItem={selectedClassForStudents}
         onClassUpdated={fetchClasses}
+      />
+
+      {/* Modal Nạp Hàng Loạt Giai Đoạn 1 (1.200 em) */}
+      <BatchSeedModal
+        isOpen={isBatchSeedOpen}
+        onClose={() => setIsBatchSeedOpen(false)}
+        onSuccess={fetchClasses}
       />
     </div>
   );

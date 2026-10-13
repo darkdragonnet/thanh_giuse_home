@@ -21,6 +21,8 @@ import type { Redis } from 'ioredis';
 import type { Pool } from 'pg';
 import {
   cleanupStagingCloudFaces,
+  executeStage1SnapshotAndSeed,
+  upsertStagingCloudFaces,
   type ClassRepository,
   type StudentRepository,
   type LogRepository,
@@ -869,6 +871,22 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           warningMessage
         );
 
+        // Đồng bộ danh sách khuôn mặt hợp lệ vào bảng staging_cloud_faces để phục vụ đối soát Offline Giai đoạn 1
+        try {
+          const validStagingInputs = responsePayload.items
+            .filter((item) => !item.isError && item.personID)
+            .map((item) => ({
+              personID: item.personID,
+              aliasID: item.aliasChuanHoaDuKien || item.rawAliasID,
+              name: item.name,
+              faceUrl: item.file || null,
+              classCode: item.maLopChuanHoa,
+            }));
+          await upsertStagingCloudFaces(fastify.pg, validStagingInputs);
+        } catch (stgErr) {
+          request.log.warn({ err: stgErr }, 'Upsert staging_cloud_faces failed');
+        }
+
         // Lưu Cache 1800s (30 phút) để bảo vệ hạn ngạch và băng thông
         try {
           await redis.set(cacheKey, JSON.stringify(responsePayload), 'EX', 1800);
@@ -1485,6 +1503,89 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
     });
 
+    // 14e. POST /api/admin/stage1/snapshot-seed (Nạp hàng loạt 1.200 học sinh Excel/CSV/JSON & Đối soát Offline 100% với staging_cloud_faces)
+    protectedRoutes.post('/stage1/snapshot-seed', async (request, reply) => {
+      const startTime = Date.now();
+      try {
+        const body = (request.body || {}) as {
+          items?: Array<{ classCode?: string; name?: string }>;
+        };
+        const items = body.items;
+
+        if (!Array.isArray(items) || items.length === 0) {
+          return reply.status(400).send({
+            success: false,
+            message: 'Danh sách học sinh không hợp lệ hoặc rỗng.',
+          });
+        }
+
+        if (items.length > 5000) {
+          return reply.status(400).send({
+            success: false,
+            message: 'Tối đa 5.000 học sinh trong một lần nạp hàng loạt.',
+          });
+        }
+
+        const CODE_REGEX = /^[A-Z0-9_-]{2,20}$/;
+        const sanitizedItems: Array<{ classCode: string; name: string }> = [];
+        let invalidCount = 0;
+
+        for (const it of items) {
+          const cleanCode = String(it?.classCode || '').trim().toUpperCase();
+          const cleanName = sanitizeStudentName(String(it?.name || ''));
+          if (!cleanCode || !CODE_REGEX.test(cleanCode) || cleanName.length < 2 || cleanName.length > 100) {
+            invalidCount++;
+            continue;
+          }
+          sanitizedItems.push({ classCode: cleanCode, name: cleanName });
+        }
+
+        if (invalidCount > 0 || sanitizedItems.length === 0) {
+          return reply.status(422).send({
+            success: false,
+            message:
+              invalidCount > 0
+                ? `Có ${invalidCount} dòng dữ liệu bị thiếu hoặc sai định dạng Mã lớp (2-20 ký tự) / Họ tên (2-100 ký tự).`
+                : 'Không có dòng dữ liệu học sinh hợp lệ để nạp.',
+          });
+        }
+
+        // Thực thi Transaction nguyên khối Offline 100% với bảng staging_cloud_faces (< 100ms)
+        const result = await executeStage1SnapshotAndSeed(fastify.pg, sanitizedItems);
+        const executionDurationMs = result.transactionDurationMs || (Date.now() - startTime);
+
+        const ip = request.ip || (request.headers['x-forwarded-for'] as string) || null;
+        await logRepo.recordLog({
+          action: 'STAGE1_BATCH_SEED',
+          result_code: '1',
+          result_message: `Admin nạp hàng loạt Giai đoạn 1: Tổng ${result.totalExcelInput} em (Thêm mới: ${result.insertedStudentsCount}, Bỏ qua trùng: ${result.skippedDuplicateCount}, Khớp Cloud: ${result.matchedFromExcelCount}, Auto-INSERT Cloud: ${result.autoInsertedFromCloudCount}) trong ${executionDurationMs}ms`,
+          ip,
+        });
+
+        return reply.status(200).send({
+          success: true,
+          data: {
+            totalImported: result.totalExcelInput,
+            insertedStudentsCount: result.insertedStudentsCount,
+            skippedDuplicateCount: result.skippedDuplicateCount,
+            classesCreated: result.classesCreatedCount,
+            matchedCloudFaces: result.matchedFromExcelCount + result.autoInsertedFromCloudCount,
+            matchedFromExcelCount: result.matchedFromExcelCount,
+            autoInsertedFromCloudCount: result.autoInsertedFromCloudCount,
+            emptyNewStudents: result.emptyNewStudentsCount,
+            executionDurationMs,
+          },
+          message: `Đã xử lý thành công ${result.totalExcelInput} học sinh trong ${executionDurationMs}ms.`,
+        });
+      } catch (error: any) {
+        request.log.error({ err: error }, '[STAGE 1 SEED ERROR]');
+        return reply.status(500).send({
+          success: false,
+          message: error.message || 'Lỗi hệ thống khi nạp dữ liệu Giai đoạn 1.',
+        });
+      }
+    });
+
     // 15. GET /api/admin/sync-batches/:batchId/status (Short Polling tiến độ batch 3s)
     protectedRoutes.get('/sync-batches/:batchId/status', async (request, reply) => {
       const { batchId } = request.params as { batchId: string };
@@ -1536,6 +1637,22 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           isAutoCorrected,
           warningMessage
         );
+
+        // Đồng bộ vào bảng staging_cloud_faces để phục vụ đối soát Offline Giai đoạn 1
+        try {
+          const validStagingInputs = responsePayload.items
+            .filter((item) => !item.isError && item.personID)
+            .map((item) => ({
+              personID: item.personID,
+              aliasID: item.aliasChuanHoaDuKien || item.rawAliasID,
+              name: item.name,
+              faceUrl: item.file || null,
+              classCode: item.maLopChuanHoa,
+            }));
+          await upsertStagingCloudFaces(fastify.pg, validStagingInputs);
+        } catch (stgErr) {
+          request.log.warn({ err: stgErr }, 'Upsert staging_cloud_faces failed in reconcile-cloud');
+        }
 
         // Lưu Cache 1800s (30 phút)
         await redis.set(cacheKey, JSON.stringify(responsePayload), 'EX', 1800);

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { apiClient } from '../../api/client';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Search, Eye, Upload, RotateCcw } from 'lucide-react';
+import { BatchSeedModal } from '../hanet/BatchSeedModal';
 
 interface Student {
   id: number;
@@ -35,16 +36,18 @@ export const StudentsTab: React.FC = () => {
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [isBatchSeedOpen, setIsBatchSeedOpen] = useState(false);
+
+  const fetchClassOptions = async () => {
+    try {
+      const res = await apiClient.get<{ success: boolean; data: ClassOption[] }>('/classes');
+      if (res.success) setClasses(res.data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   useEffect(() => {
-    const fetchClassOptions = async () => {
-      try {
-        const res = await apiClient.get<{ success: boolean; data: ClassOption[] }>('/classes');
-        if (res.success) setClasses(res.data);
-      } catch (err) {
-        console.error(err);
-      }
-    };
     fetchClassOptions();
   }, []);
 
@@ -144,9 +147,19 @@ export const StudentsTab: React.FC = () => {
           </select>
         </div>
 
-        <span className="text-xs text-gray-500 font-medium">
-          Tổng số: <strong className="text-gray-800">{total}</strong> học sinh
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-500 font-medium">
+            Tổng số: <strong className="text-gray-800">{total}</strong> học sinh
+          </span>
+
+          <button
+            onClick={() => setIsBatchSeedOpen(true)}
+            className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold text-sm rounded-lg shadow-sm transition"
+          >
+            <span>⚡</span>
+            <span>Nạp Hàng Loạt Giai Đoạn 1 (1.200 em)</span>
+          </button>
+        </div>
       </div>
 
       {/* Danh sách */}
@@ -317,6 +330,16 @@ export const StudentsTab: React.FC = () => {
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+
+      {/* Modal Nạp Hàng Loạt Giai Đoạn 1 (1.200 em) */}
+      <BatchSeedModal
+        isOpen={isBatchSeedOpen}
+        onClose={() => setIsBatchSeedOpen(false)}
+        onSuccess={() => {
+          fetchClassOptions();
+          fetchStudents();
+        }}
+      />
     </div>
   );
 };
