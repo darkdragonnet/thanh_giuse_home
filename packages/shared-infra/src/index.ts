@@ -18,5 +18,7 @@ export * from './repositories/settingsRepository.js';
 export * from './repositories/logRepository.js';
 export * from './repositories/adminRequestRepository.js';
 export * from './seeds/seed-classes.js';
+export * from './seeds/snapshot-and-seed.js';
 export * from './validators/identifier.validator.js';
+
 

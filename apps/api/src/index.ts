@@ -101,35 +101,170 @@ await server.register(adminRoutes, { prefix: '/api/admin' });
 // Đăng ký Webhook Receiver (/api/webhooks/*)
 await server.register(webhookRoutes, { prefix: '/api/webhooks' });
 
-// 4. API Lấy danh sách học sinh theo lớp
+// 4. API Lấy danh sách học sinh theo lớp (Hỗ trợ cả classId số và classCode chuỗi như TS1A)
 server.get<{ Params: { classId: string } }>(
   '/api/classes/:classId/students',
   {
     preHandler: [killSwitchGuard, classLockGuard],
   },
   async (request, reply) => {
-    const classId = parseInt(request.params.classId, 10);
-    const students = await studentRepo.getStudentsByClassId(classId);
+    const rawParam = request.params.classId.trim();
+    const numericClassId = parseInt(rawParam, 10);
+
+    if (!isNaN(numericClassId) && String(numericClassId) === rawParam) {
+      const students = await studentRepo.getStudentsByClassId(numericClassId);
+      return reply.send(students);
+    }
+
+    const classRecord = await classRepo.findByCode(rawParam.toUpperCase());
+    if (!classRecord) {
+      return reply.status(404).send({
+        error: 'Not Found',
+        message: `Không tìm thấy lớp học với mã "${rawParam}".`,
+      });
+    }
+    const students = await studentRepo.getStudentsByClassId(classRecord.id);
     return reply.send(students);
   }
 );
 
-// 5. API Nộp ảnh học sinh (Rate Limited + Atomic Lock + BullMQ Enqueue)
+// Helper xử lý Luồng 1: Nộp ảnh học sinh theo lớp (Atomic Lock chống ghi đè + BullMQ Priority 5)
+async function handleClassStudentPhotoUpload(
+  request: any,
+  reply: any
+) {
+  const studentId = parseInt(request.params.studentId, 10);
+
+  // A. Đọc file tải lên
+  const data = await request.file();
+  if (!data) {
+    return reply.status(400).send({ message: 'Vui lòng chọn ảnh tải lên.' });
+  }
+
+  const filename = `student_${studentId}_${Date.now()}.jpg`;
+  const filePath = path.join(UPLOAD_DIR, filename);
+
+  await new Promise<void>((resolve, reject) => {
+    const writeStream = fs.createWriteStream(filePath);
+    data.file.pipe(writeStream);
+    writeStream.on('finish', () => resolve());
+    writeStream.on('error', reject);
+  });
+
+  // B. Atomic Lock Database (Luồng 1): Chỉ cho phép 'empty'|'error'|'manual_review' -> 'pending'
+  // Khóa cứng nếu status = 'success' (HTTP 409 Conflict)
+  const claimed = await studentRepo.claimStudentForUpload(studentId, filePath);
+  if (!claimed) {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    return reply.status(409).send({
+      error: 'Conflict',
+      message: 'Học sinh này đã được đăng ký hoặc đang trong quá trình xử lý.',
+    });
+  }
+
+  // C. Tìm mã lớp của học sinh
+  const classRecord = await classRepo.findById(claimed.class_id);
+  const classCode = classRecord ? classRecord.code : 'UNKNOWN';
+
+  // D. Đẩy job vào hàng đợi BullMQ (Idempotent JobID ưu tiên qr_token hoặc alias_id)
+  const safeIdentifier = claimed.alias_id || claimed.qr_token || String(claimed.id);
+  const jobId = `student_${safeIdentifier}`;
+  const job = await registrationQueue.add(
+    'register',
+    {
+      studentId: claimed.id,
+      aliasId: claimed.alias_id,
+      qrToken: claimed.qr_token,
+      studentName: claimed.name,
+      classCode,
+      tempFilename: filename,
+      uploadedAt: Date.now(),
+      actionType: 'REGISTER',
+    },
+    {
+      jobId,
+      priority: 5, // Luồng 1: Học sinh đăng ký mới có priority = 5 (cao hơn Batch Sync = 20)
+      removeOnComplete: true,
+    }
+  );
+
+  // E. Ghi Audit Log (bảo toàn khóa ngoại student_id ngay cả khi alias_id = NULL)
+  await logRepo.recordLog({
+    student_id: claimed.id,
+    alias_id: claimed.alias_id,
+    class_id: claimed.class_id,
+    action: 'REGISTER',
+    result_code: 'QUEUED',
+    result_message: `Ảnh đã được lưu và đưa vào hàng đợi BullMQ (Job ID: ${job.id})`,
+    ip: request.ip,
+  });
+
+  return reply.status(200).send({
+    success: true,
+    message: 'Nộp ảnh thành công! Yêu cầu đã vào hàng đợi xử lý.',
+    jobId: job.id,
+    student: claimed,
+  });
+}
+
+// 5. API Nộp ảnh học sinh Luồng 1 (Hỗ trợ cả /photo và /register)
 server.post<{ Params: { studentId: string } }>(
   '/api/students/:studentId/photo',
   {
     preHandler: [killSwitchGuard, classLockGuard, rateLimiter],
   },
-  async (request, reply) => {
-    const studentId = parseInt(request.params.studentId, 10);
+  handleClassStudentPhotoUpload
+);
 
-    // A. Đọc file tải lên
+server.post<{ Params: { studentId: string } }>(
+  '/api/students/:studentId/register',
+  {
+    preHandler: [killSwitchGuard, classLockGuard, rateLimiter],
+  },
+  handleClassStudentPhotoUpload
+);
+
+// 5b. Luồng 2: API Tra cứu & Tự cập nhật ảnh cá nhân qua QR Token (/u/:qr_token)
+server.get<{ Params: { qrToken: string } }>(
+  '/api/students/token/:qrToken',
+  {
+    preHandler: [killSwitchGuard, classLockGuard],
+  },
+  async (request, reply) => {
+    const qrToken = request.params.qrToken.trim();
+    const student = await studentRepo.findByQrToken(qrToken);
+    if (!student) {
+      return reply.status(404).send({
+        error: 'Not Found',
+        message: 'Mã định danh cá nhân (QR Token) không tồn tại.',
+      });
+    }
+
+    const classRecord = await classRepo.findById(student.class_id);
+    return reply.status(200).send({
+      success: true,
+      student,
+      classInfo: classRecord
+        ? { id: classRecord.id, code: classRecord.code, name: classRecord.name }
+        : null,
+    });
+  }
+);
+
+server.post<{ Params: { qrToken: string } }>(
+  '/api/students/token/:qrToken/photo',
+  {
+    preHandler: [killSwitchGuard, classLockGuard, rateLimiter],
+  },
+  async (request, reply) => {
+    const qrToken = request.params.qrToken.trim();
+
     const data = await request.file();
     if (!data) {
       return reply.status(400).send({ message: 'Vui lòng chọn ảnh tải lên.' });
     }
 
-    const filename = `student_${studentId}_${Date.now()}.jpg`;
+    const filename = `token_${qrToken}_${Date.now()}.jpg`;
     const filePath = path.join(UPLOAD_DIR, filename);
 
     await new Promise<void>((resolve, reject) => {
@@ -139,60 +274,73 @@ server.post<{ Params: { studentId: string } }>(
       writeStream.on('error', reject);
     });
 
-    // B. Atomic Lock Database: Đổi từ 'empty'|'error'|'manual_review' -> 'pending'
-    const claimed = await studentRepo.claimStudentForUpload(studentId, filePath);
-    if (!claimed) {
-      // Xóa file rác nếu claim thất bại (học sinh đã đăng ký hoặc đang pending)
+    // Atomic Lock Luồng 2: Cho phép cả học sinh đã 'success' tự cập nhật ảnh (is_updating = TRUE)
+    const claimResult = await studentRepo.claimStudentForTokenSelfService(qrToken, filePath);
+    if (!claimResult) {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      const existing = await studentRepo.findByQrToken(qrToken);
+      if (!existing) {
+        return reply.status(404).send({
+          error: 'Not Found',
+          message: 'Không tìm thấy học sinh tương ứng với mã QR Token này.',
+        });
+      }
       return reply.status(409).send({
         error: 'Conflict',
-        message: 'Học sinh này đã được đăng ký hoặc đang trong quá trình xử lý.',
+        message: 'Hồ sơ của bạn đang trong quá trình xử lý ảnh trước đó. Vui lòng đợi giây lát.',
       });
     }
 
-    // C. Tìm mã lớp của học sinh
+    const { student: claimed, mode } = claimResult;
     const classRecord = await classRepo.findById(claimed.class_id);
     const classCode = classRecord ? classRecord.code : 'UNKNOWN';
+    const isUpdatePhoto = mode === 'UPDATE_PHOTO' || Boolean(claimed.person_id);
+    const actionType = isUpdatePhoto ? 'UPDATE_PHOTO' : 'REGISTER';
+    const priority = isUpdatePhoto ? 1 : 5;
 
-    // D. Đẩy job vào hàng đợi BullMQ (Idempotent JobID)
-    const jobId = `student_${claimed.alias_id}`;
+
     const job = await registrationQueue.add(
-      'register',
+      isUpdatePhoto ? 'update-photo-self' : 'register',
       {
         studentId: claimed.id,
         aliasId: claimed.alias_id,
+        qrToken: claimed.qr_token,
         studentName: claimed.name,
         classCode,
         tempFilename: filename,
         uploadedAt: Date.now(),
-        actionType: 'REGISTER',
+        actionType,
+        ...(claimed.person_id ? { personId: claimed.person_id } : {}),
       },
       {
-        jobId,
+        jobId: `token_${claimed.qr_token}_${Date.now()}`,
+        priority,
         removeOnComplete: true,
       }
     );
 
-    // E. Ghi Audit Log
     await logRepo.recordLog({
+      student_id: claimed.id,
       alias_id: claimed.alias_id,
       class_id: claimed.class_id,
-      action: 'REGISTER',
-      result_code: 'QUEUED',
-      result_message: `Ảnh đã được lưu và đưa vào hàng đợi BullMQ (Job ID: ${job.id})`,
+      action: actionType,
+      result_code: 'QUEUED_SELF_SERVICE',
+      result_message: `Học sinh nộp/cập nhật ảnh qua QR Token (Job ID: ${job.id})`,
       ip: request.ip,
     });
 
     return reply.status(200).send({
       success: true,
-      message: 'Nộp ảnh thành công! Yêu cầu đã vào hàng đợi xử lý.',
+      message: isUpdatePhoto
+        ? 'Yêu cầu đổi ảnh mới đã được đưa vào hàng đợi ưu tiên.'
+        : 'Nộp ảnh đăng ký thành công! Yêu cầu đã vào hàng đợi xử lý.',
       jobId: job.id,
       student: claimed,
     });
   }
 );
 
-// 6. Endpoint Admin Cập nhật ảnh ưu tiên (Priority Job)
+// 6. Endpoint Admin Cập nhật ảnh ưu tiên (Priority Job = 1)
 server.post<{ Params: { studentId: string } }>(
   '/api/admin/students/:studentId/override-photo',
   async (request, reply) => {
@@ -213,7 +361,8 @@ server.post<{ Params: { studentId: string } }>(
       return reply.status(400).send({ message: 'Vui lòng chọn ảnh thay thế.' });
     }
 
-    const filename = `student_${student.alias_id}_override_${Date.now()}.jpg`;
+    const safeId = student.alias_id || student.qr_token || String(student.id);
+    const filename = `student_${safeId}_override_${Date.now()}.jpg`;
     const filePath = path.join(UPLOAD_DIR, filename);
 
     await new Promise<void>((resolve, reject) => {
@@ -233,6 +382,7 @@ server.post<{ Params: { studentId: string } }>(
       {
         studentId: student.id,
         aliasId: student.alias_id,
+        qrToken: student.qr_token,
         studentName: student.name,
         classCode: classRecord?.code || 'UNKNOWN',
         tempFilename: filename,
@@ -241,13 +391,14 @@ server.post<{ Params: { studentId: string } }>(
         ...(student.person_id ? { personId: student.person_id } : {}),
       },
       {
-        jobId: `student_${student.alias_id}_override_${Date.now()}`,
+        jobId: `student_${safeId}_override_${Date.now()}`,
         priority: 1, // Admin priority job
         removeOnComplete: true,
       }
     );
 
     await logRepo.recordLog({
+      student_id: student.id,
       alias_id: student.alias_id,
       class_id: student.class_id,
       action: 'UPDATE_PHOTO',
@@ -265,7 +416,7 @@ server.post<{ Params: { studentId: string } }>(
   }
 );
 
-// 7. Yêu cầu hỗ trợ Admin từ học sinh (Rate limit: 5 lần/giờ/aliasId)
+// 7. Yêu cầu hỗ trợ Admin từ học sinh (Rate limit: 5 lần/giờ/học sinh)
 server.post(
   '/api/admin-requests',
   async (request, reply) => {
@@ -281,13 +432,17 @@ server.post(
       }
     }
 
-    const aliasId = fields.alias_id || fields.aliasId;
-    if (!aliasId) {
-      return reply.status(400).send({ message: 'Thiếu alias_id của học sinh.' });
+    const aliasId = fields.alias_id || fields.aliasId || null;
+    const qrToken = fields.qr_token || fields.qrToken || null;
+    const rawStudentId = fields.student_id || fields.studentId || null;
+    const rateKeyId = aliasId || qrToken || rawStudentId;
+
+    if (!rateKeyId) {
+      return reply.status(400).send({ message: 'Thiếu định danh học sinh (alias_id, qr_token hoặc student_id).' });
     }
 
-    // Rate Limit: 5 lần / giờ / alias_id
-    const rateLimitKey = `ratelimit:admin_req:${aliasId}`;
+    // Rate Limit: 5 lần / giờ / định danh học sinh
+    const rateLimitKey = `ratelimit:admin_req:${rateKeyId}`;
     const currentAttempts = await redisClient.incr(rateLimitKey);
     if (currentAttempts === 1) {
       await redisClient.expire(rateLimitKey, 3600);
@@ -299,7 +454,7 @@ server.post(
       });
     }
 
-    const filename = `admin_req_${aliasId}_${Date.now()}.jpg`;
+    const filename = `admin_req_${rateKeyId}_${Date.now()}.jpg`;
     const filePath = path.join(UPLOAD_DIR, filename);
 
     await new Promise<void>((resolve, reject) => {
@@ -309,10 +464,20 @@ server.post(
       writeStream.on('error', reject);
     });
 
-    const studentRecord = await studentRepo.findByAliasId(aliasId);
+    let studentRecord = aliasId ? await studentRepo.findByAliasId(aliasId) : null;
+    if (!studentRecord && qrToken && typeof studentRepo.findByQrToken === 'function') {
+      studentRecord = await studentRepo.findByQrToken(qrToken);
+    }
+    if (!studentRecord && rawStudentId) {
+      const parsedId = parseInt(rawStudentId, 10);
+      if (!isNaN(parsedId)) {
+        studentRecord = await studentRepo.findById(parsedId);
+      }
+    }
 
     const created = await adminRequestRepo.createRequest({
-      alias_id: aliasId,
+      student_id: studentRecord ? studentRecord.id : null,
+      alias_id: aliasId || (studentRecord ? studentRecord.alias_id : null),
       class_id: studentRecord ? studentRecord.class_id : undefined,
       student_name: fields.student_name || fields.studentName || (studentRecord ? studentRecord.name : undefined),
       image_path: filePath,
@@ -321,7 +486,8 @@ server.post(
     });
 
     await logRepo.recordLog({
-      alias_id: aliasId,
+      student_id: studentRecord?.id ?? null,
+      alias_id: aliasId || studentRecord?.alias_id || null,
       class_id: studentRecord?.class_id,
       action: 'ADMIN_REQUEST_CREATED',
       result_code: 'SUCCESS',
@@ -336,6 +502,7 @@ server.post(
     });
   }
 );
+
 
 // 7. API Nộp hồ sơ đăng ký học sinh mới (Kiểm tra chuẩn 9 ký tự và cô lập legacy format)
 server.post<{

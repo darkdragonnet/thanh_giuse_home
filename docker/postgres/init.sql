@@ -43,11 +43,14 @@ CREATE TABLE IF NOT EXISTS students (
     id SERIAL PRIMARY KEY,
     class_id INT REFERENCES classes(id) ON DELETE SET NULL, -- Cho phép NULL khi chưa map được prefix
     name VARCHAR(255) NOT NULL,                 -- Họ và tên học sinh
-    alias_id VARCHAR(100) UNIQUE NOT NULL,      -- Mã định danh duy nhất ngẫu nhiên
+    qr_token VARCHAR(32) UNIQUE NOT NULL,       -- Chuỗi định danh cố định 16 ký tự URL-safe
+    alias_id VARCHAR(100) UNIQUE,               -- Cho phép NULL khi khởi tạo từ Excel; chuẩn 9 ký tự khi có person_id
     status student_status DEFAULT 'empty',      -- Trạng thái máy trạng thái
     person_id VARCHAR(100) UNIQUE,              -- ID khuôn mặt do HANET Cloud cấp (Source of Truth)
     face_url TEXT,                              -- Đường dẫn ảnh trên CDN của HANET
     local_image_path TEXT,                      -- Đường dẫn ảnh tạm trên Docker Shared Volume
+    cloud_alias_synced BOOLEAN DEFAULT FALSE,   -- Cờ đồng bộ alias_id chuẩn 9 ký tự lên HANET Cloud
+    is_updating BOOLEAN DEFAULT FALSE,          -- Cờ đang cập nhật ảnh mới ở kênh /u/:qr_token
     last_error_code VARCHAR(50) DEFAULT NULL,   -- Mã lỗi gần nhất (VD: '-503', '-9008')
     last_error_message TEXT DEFAULT NULL,       -- Chi tiết thông báo lỗi từ worker hoặc HANET
     retry_count INT DEFAULT 0,                  -- Số lần đã thử lại
@@ -55,9 +58,24 @@ CREATE TABLE IF NOT EXISTS students (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Bảng nháp lưu trữ Snapshot 1 lần từ HANET Cloud (staging_cloud_faces)
+CREATE TABLE IF NOT EXISTS staging_cloud_faces (
+    id SERIAL PRIMARY KEY,
+    person_id VARCHAR(100) UNIQUE NOT NULL,
+    raw_alias VARCHAR(100) NOT NULL,
+    raw_name VARCHAR(255) NOT NULL,
+    normalized_name VARCHAR(255) NOT NULL,
+    face_url TEXT,
+    target_class_code VARCHAR(50),
+    target_class_id INT REFERENCES classes(id) ON DELETE SET NULL,
+    department_id VARCHAR(50),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Bảng đối soát xung đột đồng bộ (sync_conflicts)
 CREATE TABLE IF NOT EXISTS sync_conflicts (
     id SERIAL PRIMARY KEY,
+    student_id INT REFERENCES students(id) ON DELETE SET NULL,
     alias_id VARCHAR(100) NOT NULL,
     cloud_person_id VARCHAR(100),
     cloud_alias_id VARCHAR(100),
@@ -72,12 +90,17 @@ CREATE TABLE IF NOT EXISTS sync_conflicts (
 -- Tạo Index tối ưu hóa truy vấn thường xuyên
 CREATE INDEX IF NOT EXISTS idx_students_class_id ON students(class_id);
 CREATE INDEX IF NOT EXISTS idx_students_status ON students(status);
+CREATE INDEX IF NOT EXISTS idx_students_class_id_status ON students(class_id, status);
+CREATE INDEX IF NOT EXISTS idx_students_qr_token ON students(qr_token);
 CREATE INDEX IF NOT EXISTS idx_students_alias_id ON students(alias_id);
+CREATE INDEX IF NOT EXISTS idx_students_cloud_synced ON students(cloud_alias_synced) WHERE status = 'success';
+CREATE INDEX IF NOT EXISTS idx_staging_cloud_faces_lookup ON staging_cloud_faces(target_class_id, normalized_name);
 CREATE INDEX IF NOT EXISTS idx_sync_conflicts_alias ON sync_conflicts(alias_id);
 
 -- 4. Bảng Nhật ký hoạt động (logs)
 CREATE TABLE logs (
     id BIGSERIAL PRIMARY KEY,
+    student_id INT REFERENCES students(id) ON DELETE SET NULL,
     alias_id VARCHAR(64),
     class_id INT,
     action VARCHAR(50) NOT NULL,                -- REGISTER, UPDATE_PHOTO, RETRY, MANUAL_OVERRIDE
@@ -87,6 +110,7 @@ CREATE TABLE logs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+CREATE INDEX idx_logs_student_id ON logs(student_id);
 CREATE INDEX idx_logs_alias_id ON logs(alias_id);
 CREATE INDEX idx_logs_created_at ON logs(created_at DESC);
 
@@ -100,7 +124,8 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS admin_requests (
     id SERIAL PRIMARY KEY,
-    alias_id VARCHAR(64) NOT NULL,
+    student_id INT REFERENCES students(id) ON DELETE SET NULL,
+    alias_id VARCHAR(64),
     class_id INT REFERENCES classes(id) ON DELETE CASCADE,
     student_name VARCHAR(100),
     image_path TEXT NOT NULL,
@@ -111,6 +136,7 @@ CREATE TABLE IF NOT EXISTS admin_requests (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+CREATE INDEX IF NOT EXISTS idx_admin_requests_student_id ON admin_requests(student_id);
 CREATE INDEX IF NOT EXISTS idx_admin_requests_status ON admin_requests(status);
 CREATE INDEX IF NOT EXISTS idx_admin_requests_alias ON admin_requests(alias_id);
 
@@ -136,12 +162,12 @@ INSERT INTO classes (code, name, teacher_name, token, is_locked) VALUES
     ('10A2', 'Lớp 10A2 - Chuyên Lý', 'Cô Trần Thị Bình', 'PIN_10A2_SECRET_456', FALSE);
 
 -- Khởi tạo 5 Học sinh mẫu (Trạng thái ban đầu: 'empty')
-INSERT INTO students (class_id, name, alias_id, status) VALUES
-    (1, 'Nguyễn Hoàng Long', 'STU_10A1_001_A7B2C', 'empty'),
-    (1, 'Trần Minh Quân', 'STU_10A1_002_D4E5F', 'empty'),
-    (1, 'Lê Thị Thu Thảo', 'STU_10A1_003_G8H9J', 'empty'),
-    (2, 'Phạm Đức Trọng', 'STU_10A2_001_K1L2M', 'empty'),
-    (2, 'Vũ Mai Phương', 'STU_10A2_002_N3P4Q', 'empty');
+INSERT INTO students (class_id, name, qr_token, alias_id, status) VALUES
+    (1, 'Nguyễn Hoàng Long', 'qr_10a1_001_a7b2', 'STU_10A1_001_A7B2C', 'empty'),
+    (1, 'Trần Minh Quân', 'qr_10a1_002_d4e5', 'STU_10A1_002_D4E5F', 'empty'),
+    (1, 'Lê Thị Thu Thảo', 'qr_10a1_003_g8h9', 'STU_10A1_003_G8H9J', 'empty'),
+    (2, 'Phạm Đức Trọng', 'qr_10a2_001_k1l2', 'STU_10A2_001_K1L2M', 'empty'),
+    (2, 'Vũ Mai Phương', 'qr_10a2_002_n3p4', 'STU_10A2_002_N3P4Q', 'empty');
 
 SELECT setval('classes_id_seq', COALESCE((SELECT MAX(id) FROM classes), 1));
 SELECT setval('students_id_seq', COALESCE((SELECT MAX(id) FROM students), 1));

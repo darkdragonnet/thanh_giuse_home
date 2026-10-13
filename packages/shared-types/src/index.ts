@@ -49,11 +49,14 @@ export interface StudentEntity {
   id: number;
   class_id: number;
   name: string;
-  alias_id: string;
+  qr_token: string;
+  alias_id: string | null;
   status: StudentStatus;
   person_id?: string | null;
   face_url?: string | null;
   local_image_path?: string | null;
+  cloud_alias_synced?: boolean;
+  is_updating?: boolean;
   last_error_code?: string | null;
   last_error_message?: string | null;
   retry_count: number;
@@ -75,13 +78,16 @@ export interface UpdateStudentInput {
 
 export interface RegistrationJobData {
   studentId: number;
-  aliasId: string;
+  aliasId: string | null;
+  qrToken?: string;
   studentName: string;
   classCode: string;
+  departmentId?: string | number;
   tempFilename: string;
   uploadedAt: number;
   faceImageUrl?: string;
 }
+
 
 // ══════════════════════════════════════════════════════════════
 // HANET INTEGRATION TYPES

@@ -12,7 +12,9 @@ export interface ValidationResult {
  * Hậu tố 4 ký tự: 4 chữ cái hoặc số
  * Ví dụ hợp lệ: 'TS1A_A7B2', 'GLV0_0045', 'TN02_1111'
  */
-const VALID_9_CHAR_REGEX = /^[A-Za-z]{2}[A-Za-z0-9]{2}_[A-Za-z0-9]{4}$/;
+export const VALID_9_CHAR_REGEX = /^[A-Za-z]{2}[A-Za-z0-9]{2}_[A-Za-z0-9]{4}$/;
+export const REGEX_VALID_STUDENT_ID = VALID_9_CHAR_REGEX;
+
 
 /**
  * Validator Engine kiểm tra định danh học sinh

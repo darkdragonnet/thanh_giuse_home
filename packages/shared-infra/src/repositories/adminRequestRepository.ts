@@ -12,20 +12,38 @@ export class AdminRequestRepository {
   constructor(private readonly db: Pool) {}
 
   public async createRequest(data: CreateAdminRequestDto): Promise<AdminRequest> {
-    const query = `
-      INSERT INTO admin_requests (alias_id, class_id, student_name, image_path, note, ip, status)
-      VALUES ($1, $2, $3, $4, $5, $6, 'new')
-      RETURNING *;
-    `;
-    const res = await this.db.query(query, [
-      data.alias_id,
-      data.class_id ?? null,
-      data.student_name ?? null,
-      data.image_path,
-      data.note ?? null,
-      data.ip ?? null,
-    ]);
-    return res.rows[0];
+    try {
+      const query = `
+        INSERT INTO admin_requests (student_id, alias_id, class_id, student_name, image_path, note, ip, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'new')
+        RETURNING *;
+      `;
+      const res = await this.db.query(query, [
+        data.student_id ?? null,
+        data.alias_id ?? null,
+        data.class_id ?? null,
+        data.student_name ?? null,
+        data.image_path,
+        data.note ?? null,
+        data.ip ?? null,
+      ]);
+      return res.rows[0];
+    } catch {
+      const fallbackQuery = `
+        INSERT INTO admin_requests (alias_id, class_id, student_name, image_path, note, ip, status)
+        VALUES ($1, $2, $3, $4, $5, $6, 'new')
+        RETURNING *;
+      `;
+      const res = await this.db.query(fallbackQuery, [
+        data.alias_id ?? null,
+        data.class_id ?? null,
+        data.student_name ?? null,
+        data.image_path,
+        data.note ?? null,
+        data.ip ?? null,
+      ]);
+      return res.rows[0];
+    }
   }
 
   public async getRequests(filter: AdminRequestFilterParams = {}): Promise<any> {

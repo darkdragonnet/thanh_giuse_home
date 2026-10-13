@@ -204,10 +204,43 @@ export async function handleUpdateAlias(
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // BƯỚC 4: CẬP NHẬT DATABASE VÀ GHI AUDIT LOG (BẢO TOÀN DỮ LIỆU ĐỂ ROLLBACK NẾU CẦN)
+  // BƯỚC 4: CẬP NHẬT DATABASE VÀ GHI AUDIT LOG (BẢO TOÀN DỮ LIỆU & CHỐNG TREO 99% KHI TRÙNG KHÓA 23505)
   // ═══════════════════════════════════════════════════════════════════════════
-  await studentRepo.updateAliasSuccess(studentId, newAlias);
+  try {
+    await studentRepo.updateAliasSuccess(studentId, newAlias);
+  } catch (dbErr: any) {
+    if (dbErr?.code === '23505') {
+      console.error(`[UPDATE_ALIAS] Lỗi 23505 Unique Violation khi cập nhật newAlias "${newAlias}" cho học sinh ${studentId}.`);
+      await studentRepo.recordSyncConflict({
+        studentId,
+        aliasId: newAlias,
+        cloudPersonId: personId,
+        cloudAliasId: newAlias,
+        cloudName: studentName,
+        conflictType: 'DB_UNIQUE_ALIAS_VIOLATION_23505',
+      });
+      await studentRepo.markFailure(
+        studentId,
+        'manual_review',
+        '23505',
+        `Xung đột khóa UNIQUE (23505): Mã alias "${newAlias}" đã được gán cho một học sinh khác trong DB nội bộ.`
+      );
+      await logRepo.recordLog({
+        student_id: studentId,
+        alias_id: newAlias,
+        class_id: typeof job.data.classId === 'number' ? job.data.classId : null,
+        action: 'SYNC_ALIAS_CONFLICT',
+        result_code: '23505',
+        result_message: `Lỗi 23505 Unique Violation khi đổi alias từ "${aliasId}" sang "${newAlias}" (personID: ${personId}). Đã chuyển manual_review và ghi nhận tiến độ batch.`,
+      });
+      await recordBatchProgress(redisClient, batchId, false);
+      return { success: false, personId, aliasId: newAlias, reason: 'DB_UNIQUE_VIOLATION_23505' };
+    }
+    throw dbErr;
+  }
+
   await logRepo.recordLog({
+    student_id: studentId,
     alias_id: newAlias,
     class_id: typeof job.data.classId === 'number' ? job.data.classId : null,
     action: 'SYNC_ALIAS',
@@ -230,3 +263,4 @@ export async function handleUpdateAlias(
   console.log(`[UPDATE_ALIAS SUCCESS] Hoàn tất đồng bộ học sinh ${studentName} (${newAlias})!`);
   return { success: true, personId, aliasId: newAlias };
 }
+

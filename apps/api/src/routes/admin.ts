@@ -12,17 +12,22 @@ import {
   DataDriftReport,
   DataDriftItem,
   parseAndClassifyAlias,
+  resolveDeterministicAliasInMemory,
+  generateQrToken,
+  normalizeVietnameseStudentName,
 } from '@thanh-giuse/shared-types';
 import type { Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
 import type { Pool } from 'pg';
-import type {
-  ClassRepository,
-  StudentRepository,
-  LogRepository,
-  AdminRequestRepository,
-  SettingsRepository,
+import {
+  cleanupStagingCloudFaces,
+  type ClassRepository,
+  type StudentRepository,
+  type LogRepository,
+  type AdminRequestRepository,
+  type SettingsRepository,
 } from '@thanh-giuse/shared-infra';
+
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -278,6 +283,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         const student = await studentRepo.createStudent(classId, namesToCreate[0], cls.code);
         createdStudents = [student];
         await logRepo.recordLog({
+          student_id: student.id,
           class_id: classId,
           alias_id: student.alias_id,
           action: 'CREATE_STUDENT',
@@ -359,12 +365,17 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         [tempFilePath, student.id]
       );
 
+      const safeIdentifier = student.alias_id || student.qr_token || String(student.id);
+      const clsRecord = await classRepo.findById(student.class_id);
+
       // Đẩy job xử lý ưu tiên số 1 (High Priority)
       await registrationQueue.add(
         'SYNC_FACE',
         {
           studentId: student.id,
           aliasId: student.alias_id,
+          qrToken: student.qr_token,
+          classCode: clsRecord?.code || 'TS1A',
           name: student.name,
           studentName: student.name,
           rawImagePath: tempFilePath,
@@ -374,8 +385,8 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           uploadedAt: Date.now(),
         },
         {
-          priority: 1, // BullMQ: Priority thấp hơn = Chạy trước (Priority 1 > Priority 10)
-          jobId: `override_${student.alias_id}_${Date.now()}`,
+          priority: 1, // BullMQ: Priority thấp hơn = Chạy trước (Priority 1 > Priority 5 > Priority 20)
+          jobId: `override_${safeIdentifier}_${Date.now()}`,
         }
       );
 
@@ -413,6 +424,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       const updated = await studentRepo.updateStudent(studentId, cleanName);
       const ip = req.ip || (req.headers['x-forwarded-for'] as string) || null;
       await logRepo.recordLog({
+        student_id: student.id,
         class_id: student.class_id,
         alias_id: student.alias_id,
         action: 'UPDATE_STUDENT',
@@ -450,13 +462,15 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       const student = result.student!;
       const ip = req.ip || (req.headers['x-forwarded-for'] as string) || null;
       await logRepo.recordLog({
+        student_id: student.id,
         class_id: student.class_id,
         alias_id: student.alias_id,
         action: 'DELETE_STUDENT',
         result_code: '1',
-        result_message: `Admin đã xóa học sinh ${student.name} (${student.alias_id}) khỏi lớp`,
+        result_message: `Admin đã xóa học sinh ${student.name} (${student.alias_id || student.qr_token}) khỏi lớp`,
         ip,
       });
+
 
       return reply.send({
         success: true,
@@ -747,6 +761,18 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       warningMessage?: string
     ): CloudInspectorResponse {
       const parsedItems: ParsedCloudResult[] = rawList.map((face) => parseAndClassifyAlias(face));
+      const usedAliases = new Map<string, string>();
+      for (const item of parsedItems) {
+        if (!item.isError && item.maLopChuanHoa && item.personID) {
+          const resolved = resolveDeterministicAliasInMemory(
+            item.maLopChuanHoa,
+            item.personID,
+            usedAliases
+          );
+          item.aliasChuanHoaDuKien = resolved.aliasId;
+        }
+      }
+
 
       // Phân loại & Sắp xếp tự nhiên (Natural Sort) theo nhom3_id bên trong từng nhóm
       const validItems = parsedItems.filter((i) => !i.isError);
@@ -755,6 +781,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       validItems.sort((a, b) =>
         (a.nhom3_id || '').localeCompare(b.nhom3_id || '', undefined, { numeric: true })
       );
+
 
       // Đếm theo Sector
       let tnCount = 0;
@@ -1109,20 +1136,33 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
       await redis.expire(batchKey, 7200);
 
-      // 5. Enqueue từng job vào BullMQ registration_queue (Priority = 1)
+      // 5. Enqueue từng job vào BullMQ registration_queue (Priority = 1 cho đơn lẻ, Priority = 20 cho Batch Sync)
+      const batchPriority = eligibleStudents.length === 1 ? 1 : 20;
+      const existingAliasesRes = await fastify.pg.query<{ alias_id: string; person_id: string | null }>(
+        'SELECT alias_id, person_id FROM students WHERE alias_id IS NOT NULL'
+      );
+      const usedAliases = new Map<string, string>(
+        existingAliasesRes.rows.map((r) => [r.alias_id.toUpperCase(), r.person_id || r.alias_id])
+      );
+
       for (const s of eligibleStudents) {
         const classInfo = s.class_id ? classMap.get(s.class_id) : undefined;
         const deptId = classInfo?.departmentCode || '0';
         const classCode = classInfo?.code || 'DEFAULT';
 
         if (s.person_id) {
-          // Tính toán mã chuẩn hóa 9 ký tự qua parseAndClassifyAlias
+          // Tính toán mã chuẩn hóa 9 ký tự qua parseAndClassifyAlias + Linear Probing
           const parsed = parseAndClassifyAlias({
             personID: s.person_id,
             name: s.name,
-            aliasID: s.alias_id,
+            aliasID: s.alias_id || `${classCode}_0000`,
           });
-          const targetAlias = (!parsed.isError && parsed.aliasChuanHoaDuKien) ? parsed.aliasChuanHoaDuKien : s.alias_id;
+          const prefix4 = parsed.maLopChuanHoa || classCode;
+          const targetAlias = resolveDeterministicAliasInMemory(
+            prefix4,
+            s.person_id,
+            usedAliases
+          ).aliasId;
 
           // Job update_alias: Quy trình 2 bước đổi alias & bảo toàn phòng ban
           await registrationQueue.add(
@@ -1139,7 +1179,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
             },
             {
               jobId: `update_alias_${batchId}_${s.id}`,
-              priority: 1, // Admin priority cao nhất
+              priority: batchPriority,
             }
           );
         } else {
@@ -1153,12 +1193,12 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
               aliasId: s.alias_id,
               studentName: s.name,
               classCode,
-              tempFilename: `${s.alias_id}.jpg`,
+              tempFilename: `${s.alias_id || s.id}.jpg`,
               actionType: 'REGISTER',
             },
             {
               jobId: `register_face_${batchId}_${s.id}`,
-              priority: 1,
+              priority: batchPriority,
             }
           );
         }
@@ -1179,35 +1219,54 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         ? new Set(body.person_ids.map((id) => String(id).trim()))
         : null;
 
-      const token = process.env.HANET_ACCESS_TOKEN || process.env.HANET_TOKEN || '';
-      const placeID = process.env.HANET_PLACE_ID || '998577';
-      const primaryUrl = (process.env.HANET_API_BASE_URL || 'https://partner.hanet.ai').replace(/\/$/, '');
+      const cacheKey = 'cache:hanet:real_cloud_faces';
+      let cloudData: CloudInspectorResponse | null = null;
 
-      if (!token) {
-        return reply.status(500).send({
-          success: false,
-          message: 'Thiếu cấu hình HANET_ACCESS_TOKEN (.env)',
-        });
+      // 1. Ưu tiên đọc từ Redis Cache trước để tránh bão mạng HANET Cloud
+      try {
+        const cached = await redis.get(cacheKey);
+        if (cached) {
+          cloudData = JSON.parse(cached) as CloudInspectorResponse;
+        }
+      } catch (err) {
+        request.log.warn({ err }, 'Redis cache get failed in sync-cloud-aliases');
       }
 
-      // 1. Quét toàn bộ khuôn mặt trên HANET Cloud
-      let cloudData: CloudInspectorResponse;
-      try {
-        const { rawList, isLiveCloud, resolvedPlaceID, isAutoCorrected, warningMessage } =
-          await fetchAllRawCloudFaces(token, placeID, primaryUrl, request.log);
-        cloudData = processCloudFaces(
-          rawList,
-          resolvedPlaceID,
-          isLiveCloud,
-          isAutoCorrected,
-          warningMessage
-        );
-      } catch (err: any) {
-        request.log.error({ err }, 'Failed to fetch cloud faces for sync');
-        return reply.status(502).send({
-          success: false,
-          message: `Lỗi kết nối HANET Cloud: ${err.message || 'Không thể lấy dữ liệu'}`,
-        });
+      // Chỉ gọi mạng HANET Cloud khi Cache Miss
+      if (!cloudData) {
+        const token = process.env.HANET_ACCESS_TOKEN || process.env.HANET_TOKEN || '';
+        const placeID = process.env.HANET_PLACE_ID || '998577';
+        const primaryUrl = (process.env.HANET_API_BASE_URL || 'https://partner.hanet.ai').replace(/\/$/, '');
+
+        if (!token) {
+          return reply.status(500).send({
+            success: false,
+            message: 'Thiếu cấu hình HANET_ACCESS_TOKEN (.env)',
+          });
+        }
+
+        try {
+          const { rawList, isLiveCloud, resolvedPlaceID, isAutoCorrected, warningMessage } =
+            await fetchAllRawCloudFaces(token, placeID, primaryUrl, request.log);
+          cloudData = processCloudFaces(
+            rawList,
+            resolvedPlaceID,
+            isLiveCloud,
+            isAutoCorrected,
+            warningMessage
+          );
+          try {
+            await redis.set(cacheKey, JSON.stringify(cloudData), 'EX', 1800);
+          } catch (cacheErr) {
+            request.log.warn({ err: cacheErr }, 'Redis cache set failed in sync-cloud-aliases');
+          }
+        } catch (err: any) {
+          request.log.error({ err }, 'Failed to fetch cloud faces for sync');
+          return reply.status(502).send({
+            success: false,
+            message: `Lỗi kết nối HANET Cloud: ${err.message || 'Không thể lấy dữ liệu'}`,
+          });
+        }
       }
 
       // 2. Lọc các khuôn mặt hợp lệ có aliasChuanHoaDuKien (và lọc theo person_ids nếu có)
@@ -1227,11 +1286,16 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // 3. Tải danh sách học sinh hiện có trong DB để ánh xạ person_id
-      const existingStudentsRes = await fastify.pg.query<{ id: number; person_id: string; alias_id: string }>(
-        'SELECT id, person_id, alias_id FROM students WHERE person_id IS NOT NULL'
+      // 3. Tải danh sách học sinh hiện có trong DB để ánh xạ person_id & chống va chạm alias_id
+      const existingStudentsRes = await fastify.pg.query<{ id: number; person_id: string | null; alias_id: string | null }>(
+        'SELECT id, person_id, alias_id FROM students WHERE person_id IS NOT NULL OR alias_id IS NOT NULL'
       );
-      const studentByPersonId = new Map(existingStudentsRes.rows.map((r) => [r.person_id, r]));
+      const studentByPersonId = new Map<string, { id: number; person_id: string | null; alias_id: string | null }>();
+      const usedAliases = new Map<string, string>();
+      for (const r of existingStudentsRes.rows) {
+        if (r.person_id) studentByPersonId.set(r.person_id, r);
+        if (r.alias_id) usedAliases.set(r.alias_id.toUpperCase(), r.person_id || String(r.id));
+      }
 
       // Tải danh sách lớp để ánh xạ maLopChuanHoa -> class_id
       const classesRes = await fastify.pg.query<{ id: number; code: string }>(
@@ -1266,21 +1330,29 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
             [studentId]
           );
         } else {
-          // Auto-provision học sinh thiếu nhi chưa có trong DB VPS
+          // Auto-provision học sinh thiếu nhi chưa có trong DB VPS (kèm qr_token 16 ký tự & normalized_name)
+          const qrToken = generateQrToken();
+          const normalizedName = normalizeVietnameseStudentName(item.name);
           const insertRes = await fastify.pg.query<{ id: number }>(
-            `INSERT INTO students (name, alias_id, person_id, class_id, status, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, 'pending', NOW(), NOW())
-             ON CONFLICT (alias_id) DO UPDATE 
-             SET person_id = EXCLUDED.person_id,
-                 name = EXCLUDED.name,
+            `INSERT INTO students (name, normalized_name, alias_id, qr_token, person_id, class_id, status, cloud_alias_synced, created_at, updated_at)
+             VALUES ($1, $2, NULL, $3, $4, $5, 'pending', FALSE, NOW(), NOW())
+             ON CONFLICT (person_id) DO UPDATE 
+             SET name = EXCLUDED.name,
+                 normalized_name = EXCLUDED.normalized_name,
                  class_id = COALESCE(EXCLUDED.class_id, students.class_id),
                  status = 'pending',
                  updated_at = NOW()
              RETURNING id`,
-            [item.name, item.rawAliasID, item.personID, classId || null]
+            [item.name, normalizedName, qrToken, item.personID, classId || null]
           );
           studentId = insertRes.rows[0]!.id;
         }
+
+        const resolvedNewAlias = resolveDeterministicAliasInMemory(
+          item.maLopChuanHoa || 'TS1A',
+          item.personID,
+          usedAliases
+        ).aliasId;
 
         // Risk A: Xác định departmentId an toàn
         const finalDeptId = (item.departmentID && String(item.departmentID) !== '0')
@@ -1291,7 +1363,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           studentId,
           classId,
           aliasId: item.rawAliasID,
-          newAlias: item.aliasChuanHoaDuKien!,
+          newAlias: resolvedNewAlias,
           personId: item.personID,
           studentName: item.name,
           departmentId: finalDeptId,
@@ -1312,7 +1384,10 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
       await redis.expire(batchKey, 7200);
 
-      // 6. Enqueue từng job vào BullMQ registration_queue (Priority = 1)
+      // 6. Enqueue từng job vào BullMQ registration_queue
+      // Level 1 (SINGLE: 1 person) -> Priority = 1; Level 2/3 (Batch) -> Priority = 20 để nhường Học sinh nộp ảnh mới (Priority = 5)
+      const jobPriority = selectedPersonIds && selectedPersonIds.size === 1 ? 1 : 20;
+
       for (const j of targetJobs) {
         await registrationQueue.add(
           'update_alias',
@@ -1328,7 +1403,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           },
           {
             jobId: `update_alias_cloud_${batchId}_${j.personId}`,
-            priority: 1, // Admin priority cao nhất
+            priority: jobPriority,
           }
         );
       }
@@ -1338,6 +1413,75 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         batchId,
         queuedCount: targetJobs.length,
         message: `Đã đưa ${targetJobs.length} khuôn mặt vào hàng đợi chuẩn hóa AliasID 9 ký tự trên Cloud HANET`,
+      });
+    });
+
+    // 14c. POST /api/admin/hanet/retry-unsynced-aliases (Quét các bản ghi cloud_alias_synced = FALSE quá 30 giây và đẩy vào hàng đợi Priority = 20)
+    protectedRoutes.post('/hanet/retry-unsynced-aliases', async (_request, reply) => {
+      const unsyncedStudents = await studentRepo.getUnsyncedCloudAliasesForRetry(100);
+      if (unsyncedStudents.length === 0) {
+        return reply.send({
+          success: true,
+          queuedCount: 0,
+          message: 'Tất cả học sinh đã đồng bộ AliasID 9 ký tự lên Cloud HANET.',
+        });
+      }
+
+
+      const classesRes = await fastify.pg.query<{ id: number; code: string }>(
+        'SELECT id, code FROM classes'
+      );
+      const classById = new Map(classesRes.rows.map((c) => [c.id, c.code]));
+
+      const batchId = `batch_retry_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+      const batchKey = `batch:${batchId}`;
+      await redis.hset(batchKey, {
+        batch_id: batchId,
+        total: unsyncedStudents.length,
+        processed: 0,
+        success: 0,
+        failed: 0,
+        is_done: '0',
+        created_at: new Date().toISOString(),
+      });
+      await redis.expire(batchKey, 7200);
+
+      for (const s of unsyncedStudents) {
+        if (!s.person_id || !s.alias_id) continue;
+        const classCode = classById.get(s.class_id) || 'TS1A';
+        await registrationQueue.add(
+          'update_alias',
+          {
+            batchId,
+            studentId: s.id,
+            classId: s.class_id,
+            aliasId: s.alias_id,
+            newAlias: s.alias_id,
+            personId: s.person_id,
+            studentName: s.name,
+            departmentId: classCode.startsWith('LM') ? '990730' : '990653',
+          },
+          {
+            jobId: `retry_alias_${batchId}_${s.id}`,
+            priority: 20, // Background retry priority = 20
+          }
+        );
+      }
+
+      return reply.status(202).send({
+        success: true,
+        batchId,
+        queuedCount: unsyncedStudents.length,
+        message: `Đã đưa ${unsyncedStudents.length} bản ghi chưa đồng bộ Cloud Alias (quá 30s) vào hàng đợi chạy nền (Priority 20).`,
+      });
+    });
+
+    // 14d. POST /api/admin/staging/cleanup (Chính sách dọn dẹp bảng nháp sau 7 ngày vận hành ổn định)
+    protectedRoutes.post('/staging/cleanup', async (_request, reply) => {
+      await cleanupStagingCloudFaces(fastify.pg);
+      return reply.send({
+        success: true,
+        message: 'Đã thực thi TRUNCATE TABLE staging_cloud_faces để giải phóng dung lượng SSD.',
       });
     });
 
@@ -1421,3 +1565,4 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     });
   });
 };
+

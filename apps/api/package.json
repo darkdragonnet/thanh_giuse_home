@@ -8,6 +8,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
+    "migrate:hanet-aliases": "node dist/scripts/migrate-cloud-aliases.js",
     "test": "echo 'no tests yet' && exit 0",
     "clean": "rm -rf dist"
   },

@@ -33,9 +33,17 @@ export function createClassLockGuard(
   return async (request: FastifyRequest, reply: FastifyReply) => {
     const params = request.params as Record<string, string>;
     let classId: number | null = null;
+    let classCode: string | null = null;
 
     if (params.classId) {
-      classId = parseInt(params.classId, 10);
+      const parsed = parseInt(params.classId, 10);
+      if (!isNaN(parsed) && String(parsed) === params.classId.trim()) {
+        classId = parsed;
+      } else {
+        classCode = params.classId.trim().toUpperCase();
+      }
+    } else if (params.classCode) {
+      classCode = params.classCode.trim().toUpperCase();
     } else if (params.studentId) {
       const studentId = parseInt(params.studentId, 10);
       if (!isNaN(studentId)) {
@@ -44,16 +52,25 @@ export function createClassLockGuard(
           classId = student.class_id;
         }
       }
+    } else if (params.qrToken && typeof studentRepo.findByQrToken === 'function') {
+      const student = await studentRepo.findByQrToken(params.qrToken);
+      if (student) {
+        classId = student.class_id;
+      }
     }
 
-    if (classId) {
-      const classRecord = await classRepo.findById(classId);
-      if (classRecord && classRecord.is_locked) {
-        return reply.status(423).send({
-          error: 'Class Locked',
-          message: `Lớp học "${classRecord.name}" (${classRecord.code}) đã bị khóa đăng ký.`,
-        });
-      }
+    const classRecord = classId
+      ? await classRepo.findById(classId)
+      : classCode && typeof classRepo.findByCode === 'function'
+      ? await classRepo.findByCode(classCode)
+      : null;
+
+    if (classRecord && classRecord.is_locked) {
+      return reply.status(423).send({
+        error: 'Class Locked',
+        message: `Lớp học "${classRecord.name}" (${classRecord.code}) đã bị khóa đăng ký.`,
+      });
     }
   };
 }
+

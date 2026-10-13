@@ -156,21 +156,101 @@ export const CLOUD_CLASS_DICTIONARY: Record<string, CloudClassDictionaryItem> = 
 export const FIXED_9CHAR_ALIAS_REGEX = /^[A-Za-z]{2}[A-Za-z0-9]{2}_[A-Za-z0-9]{4}$/;
 
 /**
- * Thuật toán băm xác định FNV-1a 32-bit Base36 (mod 36^4)
+ * Sinh chuỗi qr_token cố định 16 ký tự URL-safe (Không gian 2^96 tổ hợp)
+ * Dùng cho kênh tự phục vụ cá nhân /u/:qr_token
+ */
+export function generateQrToken(): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  let token = '';
+  for (let i = 0; i < 16; i++) {
+    const idx = Math.floor(Math.random() * alphabet.length);
+    token += alphabet[idx]!;
+  }
+  return token;
+}
+
+/**
+ * Chuẩn hóa chuỗi tên tiếng Việt phục vụ đối soát Set-based SQL & In-Memory
+ */
+export function normalizeVietnameseStudentName(rawName: string): string {
+  return (rawName || '')
+    .normalize('NFC')
+    .replace(/^\s*\d+[\.\-\/\)\s]\s*/, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+/**
+ * Thuật toán băm xác định FNV-1a 32-bit Base36 (mod 36^4) kèm tham số attempt cho Linear Probing
  * Pure JS, O(n), tiêu tốn < 1 microsecond, 0 I/O overhead.
  * Đảm bảo: Cùng 1 personID luôn ra đúng 1 hậu tố 4 ký tự chữ số in hoa duy nhất.
  */
-export function generateDeterministicSuffix4(personID: string): string {
+export function generateDeterministicSuffix4(personID: string, attempt = 0): string {
   if (!personID || personID.trim() === '') return '0001';
-  let hash = 2166136261;
+  let hash = 0x811c9dc5; // 2166136261
   const str = String(personID).trim();
   for (let i = 0; i < str.length; i++) {
     hash ^= str.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
+    hash = Math.imul(hash, 0x01000193); // 16777619
   }
-  const unsigned = hash >>> 0;
-  const modVal = unsigned % 1679616; // 36^4
+  const unsigned = ((hash >>> 0) + Math.max(0, attempt)) >>> 0;
+  const modVal = unsigned % 1679616; // 36^4 = 1.679.616
   return modVal.toString(36).padStart(4, '0').toUpperCase();
+}
+
+/**
+ * Sinh mã alias_id chuẩn 9 ký tự ở Pha 2: Prefix4 + "_" + FNV1a_Suffix4(personID, attempt)
+ */
+export function generateFinalAliasId(classCode: string, personID: string, attempt = 0): string {
+  const prefix4 = normalizePrefix4(classCode);
+  const suffix4 = generateDeterministicSuffix4(personID, attempt);
+  return `${prefix4}_${suffix4}`;
+}
+
+/**
+ * Sinh mã tempAliasId chuẩn 9 ký tự ở Pha 1 (Bảo toàn Lớp trên HANET Cloud trước khi có person_id):
+ * Công thức: Prefix4 + "_" + RandomSuffix4 (4 ký tự Base36 in hoa)
+ */
+export function generateTempAliasId(classCode: string, seedToken?: string): string {
+  const prefix4 = normalizePrefix4(classCode);
+  if (seedToken && seedToken.trim().length >= 4) {
+    const cleanSeed = seedToken
+      .replace(/[^A-Za-z0-9]/g, 'X')
+      .toUpperCase()
+      .padEnd(4, '0')
+      .substring(0, 4);
+    if (/^[A-Z0-9]{4}$/.test(cleanSeed)) {
+      return `${prefix4}_${cleanSeed}`;
+    }
+  }
+  const randomVal = Math.floor(Math.random() * 1679616);
+  const randomSuffix4 = randomVal.toString(36).padStart(4, '0').toUpperCase();
+  return `${prefix4}_${randomSuffix4}`;
+}
+
+/**
+ * Giải quyết va chạm Hash In-Memory bằng Deterministic Linear Probing (tối đa maxAttempts = 3)
+ * usedAliasToPersonMap: Map<UPPERCASE_ALIAS_ID, PERSON_ID>
+ */
+export function resolveDeterministicAliasInMemory(
+  classCode: string,
+  personID: string,
+  usedAliasToPersonMap: Map<string, string>,
+  maxAttempts = 3
+): { aliasId: string; attempt: number; collided: boolean } {
+  const cleanPersonId = String(personID).trim();
+  for (let attempt = 0; attempt <= maxAttempts; attempt++) {
+    const candidate = generateFinalAliasId(classCode, cleanPersonId, attempt);
+    const upperKey = candidate.toUpperCase();
+    const existingOwner = usedAliasToPersonMap.get(upperKey);
+    if (!existingOwner || existingOwner === cleanPersonId) {
+      usedAliasToPersonMap.set(upperKey, cleanPersonId);
+      return { aliasId: candidate, attempt, collided: false };
+    }
+  }
+  const fallbackCandidate = generateFinalAliasId(classCode, cleanPersonId, 0);
+  return { aliasId: fallbackCandidate, attempt: maxAttempts, collided: true };
 }
 
 /**
@@ -283,6 +363,20 @@ export function parseAndClassifyAlias(face: RawCloudFace): ParsedCloudResult {
 
   const parts = raw.split('_');
   const partsCount = parts.length;
+
+  // Kiểm tra thành phần rỗng giữa các dấu gạch dưới (VD: 'TN__01')
+  if (parts.some((p) => p.trim() === '')) {
+    return {
+      personID: face.personID,
+      name: face.name,
+      rawAliasID: raw,
+      file: fileUrl,
+      partsCount,
+      isError: true,
+      errorCode: 'ERR_EMPTY_SEGMENT',
+      errorReason: `Mã aliasID '${raw}' có thành phần bị bỏ trống giữa các dấu gạch dưới`,
+    };
+  }
 
   // 2. Trường hợp mã 2 phần (VD: GLV_FK2S, LM_0001)
   if (partsCount === 2) {

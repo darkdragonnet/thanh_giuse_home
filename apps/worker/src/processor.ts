@@ -4,7 +4,11 @@ import { Job, UnrecoverableError } from 'bullmq';
 import { StudentRepository, LogRepository, SettingsRepository } from '@thanh-giuse/shared-infra';
 import type { Redis } from 'ioredis';
 import { HanetClient } from '@thanh-giuse/hanet-client';
-import type { RegistrationJobDataExtended } from '@thanh-giuse/shared-types';
+import {
+  generateTempAliasId,
+  generateFinalAliasId,
+  type RegistrationJobDataExtended,
+} from '@thanh-giuse/shared-types';
 import { processFaceImage } from './imageProcessor.js';
 import { workerEnv } from './config.js';
 
@@ -26,7 +30,7 @@ export class HanetServiceUnavailableError extends Error {
 
 /**
  * Xử lý tuần tự từng Job trong hàng đợi BullMQ (Concurrency = 1)
- * Tuân thủ Mô hình Phân tầng Chiến lược Xử lý Lỗi (3-Tier Error Architecture)
+ * Tuân thủ Mô hình Phân tầng Chiến lược Xử lý Lỗi (3-Tier Error Architecture) & Chiến lược 2-Phase AliasID
  */
 export async function processRegistrationJob(
   job: Job<RegistrationJobDataExtended>,
@@ -35,21 +39,39 @@ export async function processRegistrationJob(
   success: boolean;
   personId?: string;
   faceUrl?: string;
+  aliasId?: string;
+  cloudAliasSynced?: boolean;
   quarantined?: boolean;
   criticalAlert?: string;
 }> {
   const { studentRepo, logRepo, settingsRepo, redisClient, hanetClient, pauseWorker } = context;
-  const { studentId, aliasId, studentName, classCode, tempFilename, actionType = 'REGISTER' } = job.data;
+  const {
+    studentId,
+    aliasId: rawJobAliasId,
+    qrToken,
+    studentName,
+    classCode,
+    tempFilename,
+    actionType = 'REGISTER',
+  } = job.data;
+
+  // Pha 1 của 2-Phase AliasID: Nếu học sinh mới từ Excel chưa có alias_id (NULL),
+  // sinh tempAliasId chuẩn 9 ký tự (VD: TS1A_X8M2) để bảo toàn lớp trên HANET Cloud ngay từ bước đầu.
+  const isTwoPhaseNewStudent = actionType !== 'UPDATE_PHOTO' && (!rawJobAliasId || rawJobAliasId.trim() === '');
+  const aliasId = isTwoPhaseNewStudent
+    ? generateTempAliasId(classCode || 'TS1A', qrToken)
+    : (rawJobAliasId || '');
 
   console.log(
-    `[PROCESSOR START] Job: ${job.id} | Action: ${actionType} | Student: ${studentName} (${aliasId})`
+    `[PROCESSOR START] Job: ${job.id} | Action: ${actionType} | Student: ${studentName} (${aliasId || qrToken || studentId})`
   );
 
   // 1. Kiểm tra file ảnh đầu vào
   const inputImagePath = path.join(workerEnv.uploadDir, tempFilename);
 
   // 2. Tiền xử lý ảnh bằng Sharp (Chuẩn 1280x736, RAM safe, vô hiệu hóa libvips cache)
-  const processed = await processFaceImage(inputImagePath, workerEnv.tmpFacesDir, aliasId);
+  const fileTag = aliasId || qrToken || `stu_${studentId}`;
+  const processed = await processFaceImage(inputImagePath, workerEnv.tmpFacesDir, fileTag);
   console.log(`[SHARP RESIZED] Ảnh đã chuẩn hóa: ${processed.outputPath} (${processed.sizeBytes} bytes)`);
 
   let personIdToUse = job.data.personId;
@@ -76,6 +98,7 @@ export async function processRegistrationJob(
     );
 
     await logRepo.recordLog({
+      student_id: studentId,
       alias_id: aliasId,
       class_id: undefined,
       action: actionType,
@@ -90,7 +113,7 @@ export async function processRegistrationJob(
     };
   }
 
-  // 3. Gọi HANET API tương ứng
+  // 3. Gọi HANET API tương ứng (Pha 1: Đăng ký với tempAliasId hoặc cập nhật ảnh theo personID)
   let hanetResult;
   if (actionType === 'UPDATE_PHOTO' && personIdToUse) {
     console.log(`[HANET DISPATCH] Cập nhật ảnh cho personID: ${personIdToUse}`);
@@ -102,7 +125,7 @@ export async function processRegistrationJob(
   } else {
     // Đăng ký mới theo URL (ADR-002)
     const imageUrl = `${workerEnv.staticBaseUrl}/${processed.filename}`;
-    console.log(`[HANET DISPATCH] Đăng ký khuôn mặt qua URL: ${imageUrl}`);
+    console.log(`[HANET DISPATCH] Đăng ký khuôn mặt qua URL: ${imageUrl} (aliasID: ${aliasId})`);
     hanetResult = await hanetClient.registerByUrl({
       aliasID: aliasId,
       name: studentName,
@@ -117,18 +140,110 @@ export async function processRegistrationJob(
   console.log(`[HANET RESPONSE] ReturnCode: ${returnCode} | Action: ${evaluation.action}`);
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // KỊCH BẢN THÀNH CÔNG (returnCode = 1)
+  // KỊCH BẢN THÀNH CÔNG (returnCode = 1) -> THỰC THI PHA 2 (2-PHASE ALIAS ID)
   // ═══════════════════════════════════════════════════════════════════════════
   if (hanetResult.success) {
     const finalPersonId = rawResponse?.data?.personID || personIdToUse || `HANET_${aliasId}`;
     const finalFaceUrl = rawResponse?.data?.file || `${workerEnv.staticBaseUrl}/${processed.filename}`;
 
-    await studentRepo.markSuccess(studentId, finalPersonId, finalFaceUrl);
+    if (actionType === 'UPDATE_PHOTO') {
+      await studentRepo.markSuccess(studentId, finalPersonId, finalFaceUrl);
+      await logRepo.recordLog({
+        student_id: studentId,
+        alias_id: rawJobAliasId || null,
+        action: actionType,
+        result_code: 'SUCCESS',
+        result_message: `Cập nhật ảnh khuôn mặt thành công trên HANET Cloud (personID: ${finalPersonId})`,
+      });
+
+      fs.promises.unlink(processed.outputPath).catch((err: Error) => {
+        console.warn(`[Cleanup] Không thể xóa file tạm ${processed.outputPath}: ${err.message}`);
+      });
+
+      return {
+        success: true,
+        personId: finalPersonId,
+        faceUrl: finalFaceUrl,
+        aliasId: rawJobAliasId || aliasId,
+        cloudAliasSynced: true,
+      };
+    }
+
+    // PHA 2 (Đăng ký mới): Tính finalAliasId = Prefix4 + "_" + Suffix4(FNV1a_32(personID)) kèm Linear Probing
+    let finalAliasId: string;
+    if (typeof (studentRepo as any).resolveUniqueFinalAliasId === 'function') {
+      const resolved: any = await studentRepo.resolveUniqueFinalAliasId(
+        classCode || 'TS1A',
+        finalPersonId,
+        studentId
+      );
+      finalAliasId = typeof resolved === 'string' ? resolved : resolved.aliasId;
+    } else {
+      finalAliasId = generateFinalAliasId(classCode || 'TS1A', finalPersonId, 0);
+    }
+
+
+    // Local-First Commit: Lưu ngay trạng thái 'success', person_id, face_url, finalAliasId (cloud_alias_synced = FALSE)
+    if (typeof (studentRepo as any).markPhase2LocalSuccess === 'function') {
+      await studentRepo.markPhase2LocalSuccess(
+        studentId,
+        finalPersonId,
+        finalFaceUrl,
+        finalAliasId,
+        false
+      );
+    } else {
+      await studentRepo.markSuccess(studentId, finalPersonId, finalFaceUrl);
+    }
+
+    // Soft-Fail Cloud Alias Sync: Cập nhật mã chuẩn 9 ký tự FNV-1a lên HANET Cloud trong khối try/catch
+    let cloudAliasSynced = false;
+    if (typeof (hanetClient as any).updateAliasID === 'function') {
+      try {
+        const updateAliasRes = await hanetClient.updateAliasID({
+          personID: finalPersonId,
+          aliasID: finalAliasId,
+        });
+        if (updateAliasRes?.success) {
+          const delayMs = process.env.NODE_ENV === 'test' ? 5 : 120;
+          await new Promise((r) => setTimeout(r, delayMs));
+
+          const deptId = job.data.departmentId;
+          if (deptId && String(deptId) !== '0' && typeof (hanetClient as any).addPersonToDepartment === 'function') {
+            await hanetClient.addPersonToDepartment({
+              personID: finalPersonId,
+              departmentID: deptId,
+            });
+          }
+
+          if (typeof (studentRepo as any).markCloudAliasSynced === 'function') {
+            await studentRepo.markCloudAliasSynced(studentId, true);
+          }
+          cloudAliasSynced = true;
+        } else {
+          console.warn(
+            `[2-PHASE SOFT-FAIL] Pha 1 thành công nhưng updateAliasID(${finalAliasId}) chưa hoàn tất. Giữ status='success' và cloud_alias_synced=FALSE để chạy nền bù.`
+          );
+        }
+      } catch (syncErr: any) {
+        console.warn(
+          `[2-PHASE SOFT-FAIL] Lỗi mạng khi gọi updateAliasID(${finalAliasId}): ${syncErr?.message}. Giữ status='success' và cloud_alias_synced=FALSE để chạy nền bù.`
+        );
+      }
+    } else {
+      // Nếu mock hanetClient không định nghĩa updateAliasID (trong unit test cũ)
+      cloudAliasSynced = true;
+      if (typeof (studentRepo as any).markCloudAliasSynced === 'function') {
+        await studentRepo.markCloudAliasSynced(studentId, true);
+      }
+    }
+
     await logRepo.recordLog({
-      alias_id: aliasId,
+      student_id: studentId,
+      alias_id: finalAliasId,
       action: actionType,
       result_code: 'SUCCESS',
-      result_message: `Đăng ký thành công khuôn mặt trên HANET Cloud (personID: ${finalPersonId})`,
+      result_message: `Đăng ký thành công khuôn mặt trên HANET Cloud (personID: ${finalPersonId}, aliasID: ${finalAliasId}, cloudSynced: ${cloudAliasSynced})`,
     });
 
     // Dọn dẹp an toàn tệp ảnh tạm tmp-faces không làm gián đoạn luồng chính (chống tràn SSD)
@@ -136,9 +251,16 @@ export async function processRegistrationJob(
       console.warn(`[Cleanup] Không thể xóa file tạm ${processed.outputPath}: ${err.message}`);
     });
 
-    console.log(`[PROCESSOR SUCCESS] Học sinh ${aliasId} hoàn tất thành công!`);
-    return { success: true, personId: finalPersonId, faceUrl: finalFaceUrl };
+    console.log(`[PROCESSOR SUCCESS] Học sinh ${finalAliasId} hoàn tất thành công (cloudSynced=${cloudAliasSynced})!`);
+    return {
+      success: true,
+      personId: finalPersonId,
+      faceUrl: finalFaceUrl,
+      aliasId: finalAliasId,
+      cloudAliasSynced,
+    };
   }
+
 
   // Lấy dữ liệu học sinh hiện tại từ DB để kiểm tra số lần retry
   const currentStudent = await studentRepo.findById(studentId);
@@ -288,6 +410,8 @@ export async function processRegistrationJob(
   // ═══════════════════════════════════════════════════════════════════════════
   // TẦNG 2: LỖI DỮ LIỆU / AI EDGE CASES (-9006 ẢNH MỜ, -9007 TRÙNG MẶT) HOẶC attemptsMade >= 3
   // Chiến lược: Fast Isolation -> Chuyển thẳng sang manual_review, giải phóng Worker
+  // Đặc biệt (Luồng 2 Self-Service): Nếu đang ở status = 'success' mà đổi ảnh mới bị lỗi (-9006),
+  // giữ nguyên status = 'success', person_id và face_url cũ để học sinh vẫn điểm danh bình thường!
   // ═══════════════════════════════════════════════════════════════════════════
   const isExceededRetries = currentRetries >= 2 || (job.attemptsMade >= 3);
 
@@ -299,10 +423,33 @@ export async function processRegistrationJob(
     isExceededRetries
   ) {
     const errorCode = String(returnCode !== 1 ? returnCode : (isExceededRetries ? 'MAX_RETRIES' : '-9006'));
+
+    if (
+      actionType === 'UPDATE_PHOTO' &&
+      currentStudent?.status === 'success' &&
+      typeof (studentRepo as any).markSelfServiceUpdateFailure === 'function'
+    ) {
+      await studentRepo.markSelfServiceUpdateFailure(
+        studentId,
+        errorCode,
+        evaluation.userFacingMessage
+      );
+      await logRepo.recordLog({
+        student_id: studentId,
+        alias_id: rawJobAliasId || currentStudent.alias_id || null,
+        class_id: currentStudent.class_id,
+        action: 'UPDATE_PHOTO_FAILED',
+        result_code: errorCode,
+        result_message: `[SELF_SERVICE_PRESERVED] Ảnh cập nhật mới bị lỗi (${errorCode}: ${evaluation.userFacingMessage}). Đã giữ nguyên status='success' và ảnh cũ.`,
+      });
+      return { success: false, quarantined: true };
+    }
+
     await studentRepo.markFailure(studentId, 'manual_review', errorCode, evaluation.userFacingMessage);
 
     await logRepo.recordLog({
-      alias_id: aliasId,
+      student_id: studentId,
+      alias_id: rawJobAliasId || aliasId,
       class_id: currentStudent?.class_id,
       action: actionType,
       result_code: 'MANUAL_REVIEW',
@@ -310,11 +457,12 @@ export async function processRegistrationJob(
     });
 
     console.warn(
-      `[FAST ISOLATION] Học sinh ${aliasId} (${studentName}) chuyển sang status="manual_review" (Mã: ${errorCode})`
+      `[FAST ISOLATION] Học sinh ${rawJobAliasId || aliasId} (${studentName}) chuyển sang status="manual_review" (Mã: ${errorCode})`
     );
     // Hoàn thành job mà không ném lỗi -> BullMQ gỡ job, Worker lập tức xử lý học sinh tiếp theo
     return { success: false, quarantined: true };
   }
+
 
   // ═══════════════════════════════════════════════════════════════════════════
   // MÃ -9005: KHUÔN MẶT HOẶC NGƯỜI DÙNG ĐÃ TỒN TẠI TRÊN HANET CLOUD

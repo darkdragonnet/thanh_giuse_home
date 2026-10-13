@@ -180,9 +180,11 @@ export const CloudFaceInspectorTab: React.FC = () => {
       if (res.success && res.batchId) {
         setBatchId(res.batchId);
         setDrawerOpen(true);
+        setSelectedPersonIds(new Set());
       } else {
         alert(res.message || 'Không có bản ghi nào cần đồng bộ');
       }
+
     } catch (err: any) {
       alert(`Lỗi kích hoạt chuẩn hóa nhóm chọn: ${err.message || 'Thất bại'}`);
     }
@@ -924,9 +926,11 @@ export const CloudFaceInspectorTab: React.FC = () => {
         batchId={batchId}
         onClose={() => setDrawerOpen(false)}
         onCompleted={() => {
+          setSelectedPersonIds(new Set());
           fetchData(true);
         }}
       />
+
 
       {/* Modal Xử lý thủ công các ca xung đột */}
       <ManualReviewModal

@@ -2,7 +2,8 @@ export type AdminRequestStatus = 'new' | 'processing' | 'done';
 
 export interface AdminRequest {
   id: number;
-  alias_id: string;
+  student_id?: number | null;
+  alias_id: string | null;
   class_id?: number;
   student_name?: string;
   image_path: string;
@@ -14,7 +15,8 @@ export interface AdminRequest {
 }
 
 export interface CreateAdminRequestDto {
-  alias_id: string;
+  student_id?: number | null | undefined;
+  alias_id?: string | null | undefined;
   class_id?: number | null | undefined;
   student_name?: string | null | undefined;
   image_path: string;
