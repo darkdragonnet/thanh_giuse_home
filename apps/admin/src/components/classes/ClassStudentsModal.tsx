@@ -459,7 +459,12 @@ export const ClassStudentsModal: React.FC<ClassStudentsModalProps> = ({
                             <td className="px-3 py-2">
                               <div className="h-8 w-8 overflow-hidden rounded-full border bg-gray-100 flex items-center justify-center">
                                 <img
-                                  src={`/images/${s.alias_id}.jpg`}
+                                  src={
+                                    s.face_url ||
+                                    (s.alias_id
+                                      ? `/images/${s.alias_id}.jpg`
+                                      : 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="%23ccc" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 20v-2a6 6 0 0 1 12 0v2"/></svg>')
+                                  }
                                   alt={s.name}
                                   className="h-full w-full object-cover"
                                   onError={(e) => {

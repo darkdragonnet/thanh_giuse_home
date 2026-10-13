@@ -841,7 +841,22 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         try {
           const cached = await redis.get(cacheKey);
           if (cached) {
-            return reply.send({ success: true, data: JSON.parse(cached), fromCache: true });
+            const parsedPayload = JSON.parse(cached);
+            try {
+              const validStagingInputs = (parsedPayload.items || [])
+                .filter((item: any) => !item.isError && item.personID)
+                .map((item: any) => ({
+                  personID: item.personID,
+                  aliasID: item.aliasChuanHoaDuKien || item.rawAliasID,
+                  name: item.name,
+                  faceUrl: item.file || null,
+                  classCode: item.maLopChuanHoa,
+                }));
+              await upsertStagingCloudFaces(fastify.pg, validStagingInputs);
+            } catch (stgErr) {
+              request.log.warn({ err: stgErr }, 'Upsert staging_cloud_faces from cache failed');
+            }
+            return reply.send({ success: true, data: parsedPayload, fromCache: true });
           }
         } catch (err) {
           request.log.warn({ err }, 'Redis cache get failed, fallback to direct fetch');
@@ -1336,6 +1351,8 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       for (const item of validItems) {
         let studentId: number;
         let classId: number | undefined;
+        const faceUrl = item.file || null;
+        const normalizedName = normalizeVietnameseStudentName(item.name);
 
         const matchedClassId = item.maLopChuanHoa ? classByCode.get(item.maLopChuanHoa.toUpperCase()) : undefined;
         classId = matchedClassId || defaultClassId || undefined;
@@ -1344,26 +1361,55 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           const existing = studentByPersonId.get(item.personID)!;
           studentId = existing.id;
           await fastify.pg.query(
-            "UPDATE students SET status = 'pending', updated_at = NOW() WHERE id = $1",
-            [studentId]
+            `UPDATE students
+             SET status = 'pending',
+                 face_url = COALESCE($2, face_url),
+                 class_id = COALESCE($3, class_id),
+                 normalized_name = COALESCE(normalized_name, $4),
+                 updated_at = NOW()
+             WHERE id = $1`,
+            [studentId, faceUrl, matchedClassId || null, normalizedName]
           );
         } else {
-          // Auto-provision học sinh thiếu nhi chưa có trong DB VPS (kèm qr_token 16 ký tự & normalized_name)
-          const qrToken = generateQrToken();
-          const normalizedName = normalizeVietnameseStudentName(item.name);
-          const insertRes = await fastify.pg.query<{ id: number }>(
-            `INSERT INTO students (name, normalized_name, alias_id, qr_token, person_id, class_id, status, cloud_alias_synced, created_at, updated_at)
-             VALUES ($1, $2, NULL, $3, $4, $5, 'pending', FALSE, NOW(), NOW())
-             ON CONFLICT (person_id) DO UPDATE 
-             SET name = EXCLUDED.name,
-                 normalized_name = EXCLUDED.normalized_name,
-                 class_id = COALESCE(EXCLUDED.class_id, students.class_id),
-                 status = 'pending',
-                 updated_at = NOW()
-             RETURNING id`,
-            [item.name, normalizedName, qrToken, item.personID, classId || null]
-          );
-          studentId = insertRes.rows[0]!.id;
+          // Kiểm tra xem trong lớp đã có bản ghi 'empty' (chưa có person_id) trùng tên chuẩn hóa chưa để gộp trực tiếp
+          const existingEmptyRes = classId
+            ? await fastify.pg.query<{ id: number }>(
+                `SELECT id FROM students
+                 WHERE class_id = $1 AND normalized_name = $2 AND person_id IS NULL
+                 ORDER BY id ASC LIMIT 1`,
+                [classId, normalizedName]
+              )
+            : { rows: [] };
+
+          if (existingEmptyRes.rows.length > 0 && existingEmptyRes.rows[0]) {
+            studentId = existingEmptyRes.rows[0].id;
+            await fastify.pg.query(
+              `UPDATE students
+               SET person_id = $2,
+                   face_url = COALESCE($3, face_url),
+                   status = 'pending',
+                   updated_at = NOW()
+               WHERE id = $1`,
+              [studentId, item.personID, faceUrl]
+            );
+          } else {
+            // Auto-provision học sinh thiếu nhi chưa có trong DB VPS (kèm qr_token 16 ký tự, normalized_name & face_url)
+            const qrToken = generateQrToken();
+            const insertRes = await fastify.pg.query<{ id: number }>(
+              `INSERT INTO students (name, normalized_name, alias_id, qr_token, person_id, face_url, class_id, status, cloud_alias_synced, created_at, updated_at)
+               VALUES ($1, $2, NULL, $3, $4, $5, $6, 'pending', FALSE, NOW(), NOW())
+               ON CONFLICT (person_id) DO UPDATE 
+               SET name = EXCLUDED.name,
+                   normalized_name = EXCLUDED.normalized_name,
+                   face_url = COALESCE(EXCLUDED.face_url, students.face_url),
+                   class_id = COALESCE(EXCLUDED.class_id, students.class_id),
+                   status = 'pending',
+                   updated_at = NOW()
+               RETURNING id`,
+              [item.name, normalizedName, qrToken, item.personID, faceUrl, classId || null]
+            );
+            studentId = insertRes.rows[0]!.id;
+          }
         }
 
         const resolvedNewAlias = resolveDeterministicAliasInMemory(

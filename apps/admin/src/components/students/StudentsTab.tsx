@@ -181,7 +181,12 @@ export const StudentsTab: React.FC = () => {
                 <td className="px-4 py-2">
                   <div className="h-10 w-10 overflow-hidden rounded-full border bg-gray-100">
                     <img
-                      src={`/images/${s.alias_id}.jpg`}
+                      src={
+                        s.face_url ||
+                        (s.alias_id
+                          ? `/images/${s.alias_id}.jpg`
+                          : 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="%23ccc" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 20v-2a6 6 0 0 1 12 0v2"/></svg>')
+                      }
                       alt={s.name}
                       onError={(e) => { (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="%23ccc" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M6 20v-2a6 6 0 0 1 12 0v2"/></svg>'; }}
                       className="h-full w-full object-cover"

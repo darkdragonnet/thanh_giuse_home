@@ -527,7 +527,7 @@ export async function upsertStagingCloudFaces(
      SET raw_alias = EXCLUDED.raw_alias,
          full_name = EXCLUDED.full_name,
          normalized_name = EXCLUDED.normalized_name,
-         face_url = EXCLUDED.face_url,
+         face_url = COALESCE(EXCLUDED.face_url, staging_cloud_faces.face_url),
          target_class_id = COALESCE(EXCLUDED.target_class_id, staging_cloud_faces.target_class_id)`,
     [
       stgPersonIds,
@@ -538,6 +538,18 @@ export async function upsertStagingCloudFaces(
       stgTargetClassIds,
     ]
   );
+
+  // Tự động đồng bộ bù face_url từ staging_cloud_faces sang bảng students cho các hồ sơ đã có person_id
+  await pool.query(`
+    UPDATE students s
+    SET face_url = stg.face_url,
+        updated_at = NOW()
+    FROM staging_cloud_faces stg
+    WHERE s.person_id = stg.person_id
+      AND stg.face_url IS NOT NULL
+      AND stg.face_url <> ''
+      AND (s.face_url IS NULL OR s.face_url = '')
+  `);
 
   return { upsertedCount: res.rowCount ?? 0 };
 }
