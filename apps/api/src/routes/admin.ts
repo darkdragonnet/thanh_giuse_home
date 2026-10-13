@@ -830,6 +830,26 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       };
     }
 
+    // 11b. GET /api/admin/hanet/status (Kiểm tra trạng thái cấu hình & kết nối HANET Cloud)
+    protectedRoutes.get('/hanet/status', async (_request, reply) => {
+      const token = process.env.HANET_ACCESS_TOKEN || process.env.HANET_TOKEN || '';
+      const placeID = process.env.HANET_PLACE_ID || '998577';
+      const baseUrl = (process.env.HANET_API_BASE_URL || 'https://partner.hanet.ai').replace(/\/$/, '');
+      const queueWaiting = await registrationQueue.getWaitingCount();
+      const queueActive = await registrationQueue.getActiveCount();
+
+      return reply.send({
+        success: true,
+        configured: Boolean(token),
+        place_id: placeID,
+        base_url: baseUrl,
+        queue: {
+          waiting: queueWaiting,
+          active: queueActive,
+        },
+      });
+    });
+
     // 12. GET /api/admin/hanet/cloud-faces (Tra cứu & Bóc tách Face ID HANET Cloud với Auto-Pagination)
     protectedRoutes.get('/hanet/cloud-faces', async (request, reply) => {
       const query = request.query as { refresh?: string };
