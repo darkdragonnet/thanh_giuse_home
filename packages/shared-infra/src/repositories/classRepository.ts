@@ -76,8 +76,25 @@ export class ClassRepository {
   }
 
   public async findByCode(code: string): Promise<ClassRecord | null> {
-    const res = await this.pool.query('SELECT * FROM classes WHERE code = $1', [code]);
-    return (res.rows[0] as ClassRecord) || null;
+    const clean = code.trim().toUpperCase();
+    const res = await this.pool.query('SELECT * FROM classes WHERE UPPER(code) = $1', [clean]);
+    if (res.rows[0]) return res.rows[0] as ClassRecord;
+
+    // Fallback đối soát mã biến thể (Padded 4-char <-> Short code: LM01 <-> LM, GLV0 <-> GLV)
+    const variants: string[] = [];
+    if (clean === 'LM01') variants.push('LM');
+    if (clean === 'LM') variants.push('LM01');
+    if (clean === 'GLV0') variants.push('GLV');
+    if (clean === 'GLV') variants.push('GLV0');
+    if (clean.endsWith('01') && clean.length === 4) variants.push(clean.slice(0, 2));
+    if (clean.endsWith('0') && clean.length === 4) variants.push(clean.slice(0, 3));
+
+    for (const variant of variants) {
+      const fallbackRes = await this.pool.query('SELECT * FROM classes WHERE UPPER(code) = $1', [variant]);
+      if (fallbackRes.rows[0]) return fallbackRes.rows[0] as ClassRecord;
+    }
+
+    return null;
   }
 
   public async findById(id: number): Promise<ClassRecord | null> {
@@ -120,13 +137,26 @@ export class ClassRepository {
   }
 
   /**
-   * Kiểm tra mã PIN giáo viên khớp với token của lớp để miễn trừ Rate Limit
+   * Kiểm tra mã PIN giáo viên khớp với token của lớp để miễn trừ Rate Limit & hỗ trợ cập nhật ảnh
    */
   public async verifyTeacherPin(classId: number, pin: string): Promise<boolean> {
+    if (!pin) return false;
+    const cleanPin = pin.trim().toUpperCase();
     const res = await this.pool.query(
-      'SELECT id FROM classes WHERE id = $1 AND token = $2',
-      [classId, pin]
+      'SELECT id, code, token FROM classes WHERE id = $1',
+      [classId]
     );
-    return res.rows.length > 0;
+    if (!res.rows[0]) return false;
+    const cls = res.rows[0];
+    if (cls.token && cls.token.toUpperCase() === cleanPin) return true;
+
+    // Hỗ trợ PIN chuẩn dạng PIN_<CODE> (VD: PIN_LM, PIN_LM01, PIN_GLV, PIN_GLV0)
+    const code = String(cls.code || '').toUpperCase();
+    if (cleanPin === `PIN_${code}`) return true;
+    if ((code === 'LM' || code === 'LM01') && (cleanPin === 'PIN_LM01' || cleanPin === 'PIN_LM')) return true;
+    if ((code === 'GLV' || code === 'GLV0') && (cleanPin === 'PIN_GLV0' || cleanPin === 'PIN_GLV')) return true;
+    if (cleanPin.startsWith(`PIN_${code}_`)) return true;
+
+    return false;
   }
 }

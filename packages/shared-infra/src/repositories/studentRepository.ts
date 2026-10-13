@@ -1,11 +1,11 @@
 import { Pool } from 'pg';
 import crypto from 'node:crypto';
 import {
-  StudentStatus,
+  type StudentStatus,
   generateFinalAliasId,
 } from '@thanh-giuse/shared-types';
 
-export { StudentStatus };
+export type { StudentStatus };
 
 /**
  * Sinh chuỗi qr_token cố định 16 ký tự URL-safe từ CSPRNG (2^96 tổ hợp)
@@ -378,15 +378,31 @@ export class StudentRepository {
   }
 
   public async getStudentsByClassCode(classCode: string): Promise<StudentRecord[]> {
+    const clean = classCode.trim().toUpperCase();
     const query = `
       SELECT s.*
       FROM students s
       JOIN classes c ON c.id = s.class_id
-      WHERE UPPER(c.code) = UPPER($1)
+      WHERE UPPER(c.code) = $1
       ORDER BY s.name ASC;
     `;
-    const res = await this.pool.query(query, [classCode.trim()]);
-    return res.rows as StudentRecord[];
+    let res = await this.pool.query(query, [clean]);
+    if (res.rows.length > 0) return res.rows as StudentRecord[];
+
+    const variants: string[] = [];
+    if (clean === 'LM01') variants.push('LM');
+    if (clean === 'LM') variants.push('LM01');
+    if (clean === 'GLV0') variants.push('GLV');
+    if (clean === 'GLV') variants.push('GLV0');
+    if (clean.endsWith('01') && clean.length === 4) variants.push(clean.slice(0, 2));
+    if (clean.endsWith('0') && clean.length === 4) variants.push(clean.slice(0, 3));
+
+    for (const variant of variants) {
+      res = await this.pool.query(query, [variant]);
+      if (res.rows.length > 0) return res.rows as StudentRecord[];
+    }
+
+    return [];
   }
 
   /**

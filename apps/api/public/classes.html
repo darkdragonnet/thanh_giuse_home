@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Danh Sách Lớp &amp; Tiến Độ Đăng Ký — Giáo Xứ Thánh Giuse</title>
+  <style>
+    :root {
+      --primary: #0066cc;
+      --primary-hover: #0052a3;
+      --primary-light: #e6f0fa;
+      --bg: #f3f4f6;
+      --card-bg: #ffffff;
+      --text-main: #111827;
+      --text-muted: #4b5563;
+      --border: #e5e7eb;
+      --success: #16a34a;
+      --success-light: #dcfce7;
+      --warning: #d97706;
+      --warning-light: #fef3c7;
+      --danger: #dc2626;
+      --danger-light: #fee2e2;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text-main);
+      margin: 0;
+      padding: 16px;
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    .header-card {
+      background: #ffffff;
+      border-radius: 16px;
+      padding: 24px;
+      text-align: center;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+      border: 1px solid var(--border);
+      margin-bottom: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+    .header-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, #0066cc, #0284c7, #16a34a);
+    }
+    .logo-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--primary-light);
+      color: var(--primary);
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    h1 {
+      margin: 6px 0;
+      font-size: 24px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+    .header-desc {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin: 0;
+    }
+
+    /* Overall Stats Dashboard */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .stat-card {
+      background: #ffffff;
+      border-radius: 14px;
+      padding: 16px;
+      border: 1px solid var(--border);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+    }
+    .stat-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .stat-val {
+      font-size: 26px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+    .stat-val.highlight {
+      color: var(--primary);
+    }
+    .stat-val.success {
+      color: var(--success);
+    }
+
+    /* Progress bar overall */
+    .overall-progress-card {
+      background: #ffffff;
+      border-radius: 14px;
+      padding: 16px 20px;
+      border: 1px solid var(--border);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+      margin-bottom: 20px;
+    }
+    .progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .progress-track {
+      height: 12px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      overflow: hidden;
+      position: relative;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #0284c7, #16a34a);
+      width: 0%;
+      transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Filter & Search Bar */
+    .controls-card {
+      background: #ffffff;
+      border-radius: 14px;
+      padding: 14px;
+      border: 1px solid var(--border);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.03);
+      margin-bottom: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .search-input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+    .search-input {
+      width: 100%;
+      padding: 10px 14px 10px 38px;
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .search-input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.15);
+    }
+    .search-icon {
+      position: absolute;
+      left: 12px;
+      font-size: 16px;
+      color: #94a3b8;
+    }
+    .filter-pills {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .filter-pill {
+      background: #f1f5f9;
+      color: #475569;
+      border: none;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .filter-pill.active {
+      background: var(--primary);
+      color: #ffffff;
+    }
+
+    /* Class Cards Grid */
+    .class-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .class-card {
+      background: #ffffff;
+      border-radius: 14px;
+      padding: 18px;
+      border: 1px solid var(--border);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .class-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+    }
+    .class-card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 10px;
+    }
+    .class-code-tag {
+      background: #0284c7;
+      color: #fff;
+      font-weight: 800;
+      font-size: 14px;
+      padding: 4px 10px;
+      border-radius: 8px;
+      letter-spacing: 0.5px;
+    }
+    .class-status-badge {
+      font-size: 12px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+    .badge-complete { background: var(--success-light); color: var(--success); }
+    .badge-in-progress { background: var(--primary-light); color: var(--primary); }
+    .badge-locked { background: #fee2e2; color: #b91c1c; }
+
+    .class-name {
+      font-size: 17px;
+      font-weight: 700;
+      color: #0f172a;
+      margin: 0 0 4px 0;
+    }
+    .class-teacher {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin: 0 0 12px 0;
+    }
+
+    /* Card Progress */
+    .card-progress-wrapper {
+      margin-bottom: 14px;
+    }
+    .card-progress-info {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .card-progress-track {
+      height: 8px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .card-progress-fill {
+      height: 100%;
+      background: #16a34a;
+      border-radius: 999px;
+    }
+    .card-stats-tags {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    .tag-sm {
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .tag-success { background: var(--success-light); color: var(--success); }
+    .tag-pending { background: var(--warning-light); color: var(--warning); }
+    .tag-empty { background: #f1f5f9; color: #64748b; }
+
+    /* Action Buttons */
+    .card-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid #f1f5f9;
+    }
+    .btn-enter {
+      flex: 1;
+      background: var(--primary);
+      color: #ffffff;
+      border: none;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      text-decoration: none;
+      text-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn-enter:hover {
+      background: var(--primary-hover);
+    }
+    .btn-icon {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      color: #334155;
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    .btn-icon:hover {
+      background: #f1f5f9;
+      border-color: #cbd5e1;
+    }
+
+    /* Modal QR */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(4px);
+      z-index: 999;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-overlay.active {
+      display: flex;
+    }
+    .modal-content {
+      background: #ffffff;
+      border-radius: 20px;
+      max-width: 380px;
+      width: 100%;
+      padding: 24px;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2);
+      text-align: center;
+      position: relative;
+      animation: modalSlideUp 0.25s ease-out;
+    }
+    @keyframes modalSlideUp {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .modal-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: #0f172a;
+      margin: 0 0 6px 0;
+    }
+    .modal-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin: 0 0 16px 0;
+    }
+    .qr-container {
+      background: #f8fafc;
+      border: 1.5px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+      box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
+    }
+    .qr-img {
+      width: 200px;
+      height: 200px;
+      display: block;
+      border-radius: 8px;
+    }
+    .url-box {
+      background: #f1f5f9;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 12px;
+      color: #334155;
+      word-break: break-all;
+      margin-bottom: 16px;
+      user-select: all;
+    }
+    .modal-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .btn-copy-link {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      padding: 12px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .btn-close-modal {
+      background: #f1f5f9;
+      color: #475569;
+      border: none;
+      padding: 10px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: #0f172a;
+      color: #ffffff;
+      padding: 12px 24px;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 600;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 1000;
+    }
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* Loading skeleton */
+    .skeleton-loader {
+      text-align: center;
+      padding: 40px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- Header Card -->
+    <div class="header-card">
+      <div class="logo-badge">✝ GIÁO XỨ THÁNH GIUSE</div>
+      <h1>Cổng Danh Sách Lớp &amp; Đăng Ký Khuôn Mặt</h1>
+      <p class="header-desc">Hệ thống đồng bộ trực tuyến HANET Cloud — Chọn lớp để nộp ảnh nhận diện</p>
+    </div>
+
+    <!-- Overall Statistics -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <span class="stat-label">Tổng Số Lớp</span>
+        <span class="stat-val highlight" id="statTotalClasses">--</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Tổng Học Sinh</span>
+        <span class="stat-val" id="statTotalStudents">--</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Đã Hoàn Thành</span>
+        <span class="stat-val success" id="statTotalSuccess">--</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Tiến Độ Toàn Trường</span>
+        <span class="stat-val highlight" id="statOverallRate">0%</span>
+      </div>
+    </div>
+
+    <!-- Overall Progress Bar -->
+    <div class="overall-progress-card">
+      <div class="progress-header">
+        <span>Tiến Độ Tổng Thể</span>
+        <span id="overallRateText">0% Hoàn Thành</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="overallProgressFill"></div>
+      </div>
+    </div>
+
+    <!-- Controls: Search & Category Filter -->
+    <div class="controls-card">
+      <div class="search-input-wrapper">
+        <span class="search-icon">🔍</span>
+        <input 
+          type="text" 
+          id="searchInput" 
+          class="search-input" 
+          placeholder="Tìm theo tên lớp, mã lớp hoặc tên GLV..." 
+          autocomplete="off"
+        >
+      </div>
+      <div class="filter-pills" id="filterPills">
+        <button class="filter-pill active" data-filter="ALL">Tất Cả (29 Lớp)</button>
+        <button class="filter-pill" data-filter="CC">Chiên Con</button>
+        <button class="filter-pill" data-filter="AN">Ấu Nhi</button>
+        <button class="filter-pill" data-filter="TN">Thiếu Nhi</button>
+        <button class="filter-pill" data-filter="NS">Nghĩa Sĩ</button>
+        <button class="filter-pill" data-filter="KT">Khai Tâm</button>
+        <button class="filter-pill" data-filter="DT">Dự Trưởng</button>
+        <button class="filter-pill" data-filter="GLV">Giáo Lý Viên</button>
+      </div>
+    </div>
+
+    <!-- Classes Grid List -->
+    <div id="classesLoading" class="skeleton-loader">
+      ⏳ Đang tải dữ liệu 29 lớp học từ máy chủ...
+    </div>
+    <div class="class-grid" id="classGrid" style="display: none;"></div>
+  </div>
+
+  <!-- Modal QR Code -->
+  <div class="modal-overlay" id="qrModal">
+    <div class="modal-content">
+      <h3 class="modal-title" id="qrModalTitle">Mã QR Lớp</h3>
+      <p class="modal-desc">Quét mã bằng Camera hoặc Zalo để vào nộp ảnh</p>
+      
+      <div class="qr-container">
+        <img id="qrModalImg" class="qr-img" src="" alt="Mã QR Lớp">
+      </div>
+
+      <div class="url-box" id="qrModalUrl">--</div>
+
+      <div class="modal-actions">
+        <button class="btn-copy-link" id="btnCopyModalLink">📋 Sao Chép Link Đăng Ký</button>
+        <a id="btnGoModalLink" class="btn-copy-link" style="background:#0284c7; text-decoration:none;" href="#">👉 Vào Trang Lớp Ngay</a>
+        <button class="btn-close-modal" id="btnCloseModal">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast" id="toast">Đã sao chép link đăng ký!</div>
+
+  <script>
+    let allClasses = [];
+    let activeFilter = 'ALL';
+    let searchQuery = '';
+
+    // DOM Elements
+    const statTotalClasses = document.getElementById('statTotalClasses');
+    const statTotalStudents = document.getElementById('statTotalStudents');
+    const statTotalSuccess = document.getElementById('statTotalSuccess');
+    const statOverallRate = document.getElementById('statOverallRate');
+    const overallRateText = document.getElementById('overallRateText');
+    const overallProgressFill = document.getElementById('overallProgressFill');
+    const classGrid = document.getElementById('classGrid');
+    const classesLoading = document.getElementById('classesLoading');
+    const searchInput = document.getElementById('searchInput');
+    const filterPills = document.getElementById('filterPills');
+    const toast = document.getElementById('toast');
+
+    // Modal Elements
+    const qrModal = document.getElementById('qrModal');
+    const qrModalTitle = document.getElementById('qrModalTitle');
+    const qrModalImg = document.getElementById('qrModalImg');
+    const qrModalUrl = document.getElementById('qrModalUrl');
+    const btnCopyModalLink = document.getElementById('btnCopyModalLink');
+    const btnGoModalLink = document.getElementById('btnGoModalLink');
+    const btnCloseModal = document.getElementById('btnCloseModal');
+
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2500);
+    }
+
+    async function copyToClipboard(text, customMsg) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+        }
+        showToast(customMsg || 'Đã sao chép link đăng ký!');
+      } catch (err) {
+        showToast('Vui lòng sao chép thủ công: ' + text);
+      }
+    }
+
+    function getClassRegisterUrl(code) {
+      return `${window.location.origin}/l/${encodeURIComponent(code)}`;
+    }
+
+    function openQrModal(cls) {
+      const url = getClassRegisterUrl(cls.code);
+      qrModalTitle.textContent = `Mã QR — ${cls.name} (${cls.code})`;
+      qrModalUrl.textContent = url;
+      qrModalImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(url)}`;
+      btnGoModalLink.href = url;
+
+      btnCopyModalLink.onclick = () => {
+        copyToClipboard(url, `Đã sao chép link lớp ${cls.code}!`);
+      };
+
+      qrModal.classList.add('active');
+    }
+
+    btnCloseModal.addEventListener('click', () => {
+      qrModal.classList.remove('active');
+    });
+
+    qrModal.addEventListener('click', (e) => {
+      if (e.target === qrModal) {
+        qrModal.classList.remove('active');
+      }
+    });
+
+    // Load classes from /api/public/classes
+    async function fetchClasses() {
+      try {
+        const res = await fetch('/api/public/classes');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        
+        allClasses = Array.isArray(data) ? data : (data.data || []);
+        
+        // Update stats
+        const totalCls = data.total_classes ?? allClasses.length;
+        const totalStu = data.total_students ?? allClasses.reduce((s, c) => s + (c.total_students || 0), 0);
+        const totalSucc = data.total_success ?? allClasses.reduce((s, c) => s + (c.success_count || 0), 0);
+        const overallRate = data.overall_completion_rate ?? (totalStu > 0 ? Math.round((totalSucc / totalStu) * 100) : 0);
+
+        statTotalClasses.textContent = totalCls;
+        statTotalStudents.textContent = totalStu;
+        statTotalSuccess.textContent = totalSucc;
+        statOverallRate.textContent = `${overallRate}%`;
+        overallRateText.textContent = `${overallRate}% Hoàn Thành (${totalSucc}/${totalStu})`;
+        overallProgressFill.style.width = `${overallRate}%`;
+
+        classesLoading.style.display = 'none';
+        classGrid.style.display = 'grid';
+
+        renderClasses();
+      } catch (err) {
+        classesLoading.innerHTML = `⚠️ Không thể tải danh sách lớp: ${err.message}.<br><button onclick="fetchClasses()" style="margin-top:10px;padding:6px 14px;border-radius:6px;background:#0066cc;color:#fff;border:none;cursor:pointer;">Thử lại</button>`;
+      }
+    }
+
+    function renderClasses() {
+      const q = searchQuery.toLowerCase().trim();
+
+      const filtered = allClasses.filter(c => {
+        // Filter by category
+        if (activeFilter !== 'ALL') {
+          const upperCode = (c.code || '').toUpperCase();
+          if (activeFilter === 'GLV' && !upperCode.startsWith('GLV')) return false;
+          if (activeFilter === 'CC' && !upperCode.startsWith('CC')) return false;
+          if (activeFilter === 'AN' && !upperCode.startsWith('AN')) return false;
+          if (activeFilter === 'TN' && !upperCode.startsWith('TN')) return false;
+          if (activeFilter === 'NS' && !upperCode.startsWith('NS')) return false;
+          if (activeFilter === 'KT' && !upperCode.startsWith('KT')) return false;
+          if (activeFilter === 'DT' && !upperCode.startsWith('DT') && !upperCode.startsWith('HS')) return false;
+        }
+
+        // Search by query
+        if (q) {
+          const matchCode = (c.code || '').toLowerCase().includes(q);
+          const matchName = (c.name || '').toLowerCase().includes(q);
+          const matchTeacher = (c.teacher_name || '').toLowerCase().includes(q);
+          if (!matchCode && !matchName && !matchTeacher) return false;
+        }
+
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        classGrid.innerHTML = `
+          <div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: #64748b; background:#fff; border-radius:14px; border:1px solid #e2e8f0;">
+            Không tìm thấy lớp học nào khớp với bộ lọc "${searchQuery || activeFilter}".
+          </div>
+        `;
+        return;
+      }
+
+      classGrid.innerHTML = filtered.map(c => {
+        const total = c.total_students || 0;
+        const success = c.success_count || 0;
+        const pending = c.pending_count || 0;
+        const empty = c.empty_count || 0;
+        const rate = c.completion_rate ?? (total > 0 ? Math.round((success / total) * 100) : 0);
+        const registerUrl = getClassRegisterUrl(c.code);
+
+        let statusBadge = '';
+        if (c.is_locked) {
+          statusBadge = '<span class="class-status-badge badge-locked">Đã Khóa</span>';
+        } else if (rate === 100 && total > 0) {
+          statusBadge = '<span class="class-status-badge badge-complete">Hoàn Tất</span>';
+        } else {
+          statusBadge = `<span class="class-status-badge badge-in-progress">${rate}%</span>`;
+        }
+
+        return `
+          <div class="class-card">
+            <div>
+              <div class="class-card-top">
+                <span class="class-code-tag">${c.code}</span>
+                ${statusBadge}
+              </div>
+              <h3 class="class-name">${c.name}</h3>
+              <p class="class-teacher">👤 Phụ trách: <strong>${c.teacher_name || 'Đang cập nhật'}</strong></p>
+
+              <div class="card-progress-wrapper">
+                <div class="card-progress-info">
+                  <span>Tiến độ chụp ảnh</span>
+                  <span>${success}/${total}</span>
+                </div>
+                <div class="card-progress-track">
+                  <div class="card-progress-fill" style="width: ${rate}%;"></div>
+                </div>
+                <div class="card-stats-tags">
+                  <span class="tag-sm tag-success">✓ ${success} Đạt</span>
+                  ${pending > 0 ? `<span class="tag-sm tag-pending">⏳ ${pending} Chờ</span>` : ''}
+                  <span class="tag-sm tag-empty">○ ${empty} Chưa</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card-actions">
+              <a href="${registerUrl}" class="btn-enter">
+                👉 Vào Đăng Ký
+              </a>
+              <button class="btn-icon btn-qr" data-code="${c.code}" title="Mở Mã QR">
+                📱 QR
+              </button>
+              <button class="btn-icon btn-copy" data-url="${registerUrl}" data-code="${c.code}" title="Sao chép link">
+                📋
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // Add event listeners for QR and Copy buttons
+      classGrid.querySelectorAll('.btn-qr').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const code = btn.getAttribute('data-code');
+          const cls = allClasses.find(x => x.code === code);
+          if (cls) openQrModal(cls);
+        });
+      });
+
+      classGrid.querySelectorAll('.btn-copy').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const url = btn.getAttribute('data-url');
+          const code = btn.getAttribute('data-code');
+          copyToClipboard(url, `Đã chép link đăng ký lớp ${code}!`);
+        });
+      });
+    }
+
+    // Search event
+    searchInput.addEventListener('input', (e) => {
+      searchQuery = e.target.value;
+      renderClasses();
+    });
+
+    // Filter pills event
+    filterPills.addEventListener('click', (e) => {
+      const btn = e.target.closest('.filter-pill');
+      if (!btn) return;
+      filterPills.querySelectorAll('.filter-pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeFilter = btn.getAttribute('data-filter');
+      renderClasses();
+    });
+
+    // Initial fetch
+    fetchClasses();
+
+    // Auto-refresh every 30s
+    setInterval(fetchClasses, 30000);
+  </script>
+</body>
+</html>

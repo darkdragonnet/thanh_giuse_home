@@ -85,6 +85,94 @@
       color: #92400e;
     }
 
+    /* Zalo Escape Overlay - Hướng dẫn mở trình duyệt ngoài trực quan 100% */
+    .zalo-escape-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.88);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      z-index: 99999;
+      color: #fff;
+      padding: 16px 20px;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      overflow-y: auto;
+    }
+    .zalo-arrow-container {
+      width: 100%;
+      max-width: 520px;
+      display: flex;
+      justify-content: flex-end;
+      padding-right: 14px;
+      margin-top: 8px;
+    }
+    .zalo-arrow-pulse {
+      font-size: 38px;
+      line-height: 1;
+      color: #fbbf24;
+      font-weight: 900;
+      animation: bounceTopRight 0.9s infinite alternate ease-in-out;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    @keyframes bounceTopRight {
+      from { transform: translate(0, 0) scale(1); }
+      to { transform: translate(6px, -8px) scale(1.18); }
+    }
+    .zalo-escape-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      max-width: 440px;
+      width: 100%;
+      padding: 22px 20px;
+      margin-top: 10px;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+      text-align: left;
+    }
+    .zalo-escape-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .zalo-step-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 14px;
+      font-size: 14px;
+      line-height: 1.5;
+      color: #e2e8f0;
+    }
+    .zalo-step-num {
+      background: #2563eb;
+      color: #fff;
+      font-weight: 700;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .zalo-escape-btn-group {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
     /* Main Card */
     .card {
       background: var(--card-bg);
@@ -490,7 +578,7 @@
         👤 Chưa có ảnh được chọn.<br>
         <small>Chụp chính diện, đủ ánh sáng, không đeo khẩu trang hoặc kính râm.</small>
       </div>
-      <img id="previewImg" alt="Xem trước ảnh chân dung">
+      <img id="previewImg" alt="Xem trước ảnh chân dung" referrerpolicy="no-referrer" loading="eager">
       <div id="imageMetaInfo" class="image-meta"></div>
     </div>
 
@@ -505,6 +593,32 @@
       ⏳ Hệ thống đang xử lý nhận diện khuôn mặt... (Tự động cập nhật mỗi 3 giây)
     </div>
     <div id="statusMsg" class="status-msg"></div>
+  </div>
+</div>
+
+<!-- Modal Hướng dẫn thoát Zalo In-App WebView sang Safari / Chrome -->
+<div id="zaloEscapeOverlay" class="zalo-escape-overlay">
+  <div class="zalo-arrow-container">
+    <div class="zalo-arrow-pulse">↗️ [•••]</div>
+  </div>
+  <div class="zalo-escape-card">
+    <div class="zalo-escape-title">🌐 Mở bằng Trình Duyệt Ngoài</div>
+    <div class="zalo-step-item">
+      <div class="zalo-step-num">1</div>
+      <div>Nhìn lên góc <strong>trên cùng bên phải</strong> màn hình Zalo, bấm vào biểu tượng <strong>[ ••• ]</strong> (dấu 3 chấm).</div>
+    </div>
+    <div class="zalo-step-item">
+      <div class="zalo-step-num">2</div>
+      <div>Chọn <strong>"Mở bằng trình duyệt"</strong> (Safari trên iPhone hoặc Chrome trên Android) để mở máy ảnh đầy đủ tính năng.</div>
+    </div>
+    <div class="zalo-escape-btn-group">
+      <button type="button" id="zaloCopyLinkBtn" class="btn-primary" style="background:#2563eb;margin:0;">
+        📋 Sao chép liên kết vào bộ nhớ tạm
+      </button>
+      <button type="button" id="zaloCloseOverlayBtn" class="btn-secondary" style="background:#334155;border-color:#475569;color:#f8fafc;margin:0;">
+        Đã hiểu, đóng thông báo này
+      </button>
+    </div>
   </div>
 </div>
 
@@ -691,6 +805,10 @@
   const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   const isAndroid = /Android/i.test(ua);
 
+  const zaloEscapeOverlay = document.getElementById('zaloEscapeOverlay');
+  const zaloCopyLinkBtn = document.getElementById('zaloCopyLinkBtn');
+  const zaloCloseOverlayBtn = document.getElementById('zaloCloseOverlayBtn');
+
   function initEnvironmentCheck() {
     if (isInAppWebView) {
       zaloBanner.style.display = 'block';
@@ -700,18 +818,56 @@
     }
   }
 
+  function showZaloEscapeGuide() {
+    if (zaloEscapeOverlay) {
+      zaloEscapeOverlay.style.display = 'flex';
+    }
+  }
+
+  function hideZaloEscapeGuide() {
+    if (zaloEscapeOverlay) {
+      zaloEscapeOverlay.style.display = 'none';
+    }
+  }
+
+  if (zaloCloseOverlayBtn) {
+    zaloCloseOverlayBtn.addEventListener('click', hideZaloEscapeGuide);
+  }
+  if (zaloCopyLinkBtn) {
+    zaloCopyLinkBtn.addEventListener('click', () => {
+      copyCurrentUrlToClipboard(false);
+      showStatus('Đã sao chép liên kết vào bộ nhớ tạm!', true);
+    });
+  }
+
   function openInExternalBrowser() {
     const targetUrl = window.location.href;
+    copyCurrentUrlToClipboard(false);
+
+    // 1. Trên Android: Thử kích hoạt Intent mở trực tiếp Chrome / Browser
     if (isAndroid) {
       const cleanUrl = targetUrl.replace(/^https?:\/\//i, '');
       const scheme = window.location.protocol.replace(':', '') || 'http';
-      const intentUrl = `intent://${cleanUrl}#Intent;scheme=${scheme};package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(targetUrl)};end`;
-      window.location.href = intentUrl;
-      return;
+      
+      // Standard Browsable Intent targeting Chrome
+      const chromeIntent = `intent://${cleanUrl}#Intent;scheme=${scheme};action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;package=com.android.chrome;end`;
+
+      try {
+        const anchor = document.createElement('a');
+        anchor.href = chromeIntent;
+        anchor.target = '_blank';
+        anchor.rel = 'noopener noreferrer';
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+      } catch (e) {
+        window.location.href = chromeIntent;
+      }
     }
-    // Trên iOS hoặc thiết bị khác: hiển thị hướng dẫn mở bằng Safari và tự copy link
-    iosZaloHint.style.display = 'block';
-    copyCurrentUrlToClipboard(true);
+
+    // 2. Hiển thị modal hướng dẫn trực quan (Có mũi tên chỉ vào [•••] góc trên bên phải)
+    // Hoạt động 100% trên cả iPhone/iPad lẫn Android nếu Intent bị Zalo chặn
+    showZaloEscapeGuide();
   }
 
   function copyCurrentUrlToClipboard(showGuideAlert) {
@@ -743,6 +899,120 @@
   openExternalBrowserBtn.addEventListener('click', openInExternalBrowser);
   lockOpenBrowserBtn.addEventListener('click', openInExternalBrowser);
   copyCurrentLinkBtn.addEventListener('click', () => copyCurrentUrlToClipboard(false));
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // HỆ THỐNG XỬ LÝ AVATAR & HIỂN THỊ ẢNH HỌC SINH ĐA TẦNG (CASCADED FALLBACK)
+  // ═══════════════════════════════════════════════════════════════════════════
+  function getStudentInitials(name) {
+    if (!name) return 'HS';
+    // Bỏ qua các tên thánh thông dụng để lấy chữ cái đầu của họ và tên gọi
+    const clean = name.trim().replace(/^(ANNA|MARIA|GIUSE|TERESA|PHÊ-RÔ|LUY|TÔMA|JB|AUGUSTINÔ|VINH SƠN)\s+/i, '').trim() || name.trim();
+    const parts = clean.split(/\s+/).filter(Boolean);
+    if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+
+  function generateSvgAvatar(initials, fullName) {
+    const bgColors = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2', '#4f46e5'];
+    let hash = 0;
+    for (let i = 0; i < initials.length; i++) hash = (hash << 5) - hash + initials.charCodeAt(i);
+    const color = bgColors[Math.abs(hash) % bgColors.length];
+    const safeName = (fullName || '').replace(/["'<>&]/g, '');
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
+      <defs>
+        <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="${color}" />
+          <stop offset="100%" stop-color="#1e293b" />
+        </linearGradient>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#g)" rx="16"/>
+      <circle cx="150" cy="115" r="52" fill="rgba(255,255,255,0.2)"/>
+      <path d="M70,250 C70,195 110,180 150,180 C190,180 230,195 230,250 Z" fill="rgba(255,255,255,0.2)"/>
+      <text x="150" y="132" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="44" font-weight="700" fill="#ffffff" text-anchor="middle">${initials}</text>
+      <text x="150" y="278" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="13" font-weight="600" fill="#ffffff" text-anchor="middle" opacity="0.95">${safeName}</text>
+    </svg>`;
+    return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  }
+
+  function resolveStudentImageCandidates(student) {
+    if (!student) return [];
+    const candidates = [];
+
+    // 1. face_url (Cloud HANET CDN hoặc URL hợp lệ)
+    if (student.face_url && typeof student.face_url === 'string') {
+      let url = student.face_url.trim();
+      if (url) {
+        // Chuẩn hóa nếu chứa Docker internal hostname app_proxy
+        if (url.includes('app_proxy')) {
+          url = url.replace(/https?:\/\/app_proxy(:\d+)?/i, window.location.origin);
+        }
+        candidates.push(url);
+      }
+    }
+
+    // 2. local_image_path (Ảnh đã lưu trên VPS trong /app/uploads/)
+    if (student.local_image_path && typeof student.local_image_path === 'string') {
+      const filename = student.local_image_path.split('/').pop();
+      if (filename) {
+        candidates.push(`/uploads/${encodeURIComponent(filename)}`);
+      }
+    }
+
+    // 3. Ảnh tĩnh theo alias_id trong /images/
+    if (student.alias_id) {
+      candidates.push(`/images/${encodeURIComponent(student.alias_id)}.jpg`);
+    }
+
+    return candidates;
+  }
+
+  function displayStudentExistingPhoto(student) {
+    if (!student) {
+      previewImg.style.display = 'none';
+      previewPlaceholder.style.display = 'block';
+      return;
+    }
+
+    const candidates = resolveStudentImageCandidates(student);
+
+    if (candidates.length === 0) {
+      if (student.status === 'success') {
+        const initials = getStudentInitials(student.name);
+        previewImg.src = generateSvgAvatar(initials, student.name);
+        previewImg.style.display = 'block';
+        previewPlaceholder.style.display = 'none';
+      } else {
+        previewImg.style.display = 'none';
+        previewPlaceholder.style.display = 'block';
+      }
+      return;
+    }
+
+    let candidateIndex = 0;
+
+    function tryNextCandidate() {
+      if (candidateIndex < candidates.length) {
+        const nextUrl = candidates[candidateIndex++];
+        previewImg.src = nextUrl;
+        previewImg.style.display = 'block';
+        previewPlaceholder.style.display = 'none';
+      } else {
+        // Tất cả URL đều 404/lỗi tải
+        if (student.status === 'success') {
+          const initials = getStudentInitials(student.name);
+          previewImg.src = generateSvgAvatar(initials, student.name);
+          previewImg.style.display = 'block';
+          previewPlaceholder.style.display = 'none';
+        } else {
+          previewImg.style.display = 'none';
+          previewPlaceholder.style.display = 'block';
+        }
+      }
+    }
+
+    previewImg.onerror = tryNextCandidate;
+    tryNextCandidate();
+  }
 
   // Khóa Phản Ứng (Reactive Camera Lock) khi chụp hình lỗi
   function triggerCameraLock(reasonText) {
@@ -947,21 +1217,9 @@
       studentSuccessBox.style.display = 'none';
     }
 
-    // Tự động hiển thị ảnh đã có của học sinh nếu người dùng chưa chọn ảnh mới từ máy
+    // Tự động hiển thị ảnh đã có của học sinh qua chuỗi Fallback đa tầng
     if (!compressedBlob) {
-      const existingImgUrl = currentStudent.face_url || (currentStudent.alias_id ? `/images/${currentStudent.alias_id}.jpg` : '');
-      if (existingImgUrl) {
-        previewImg.src = existingImgUrl;
-        previewImg.style.display = 'block';
-        previewPlaceholder.style.display = 'none';
-        previewImg.onerror = () => {
-          previewImg.style.display = 'none';
-          previewPlaceholder.style.display = 'block';
-        };
-      } else {
-        previewImg.style.display = 'none';
-        previewPlaceholder.style.display = 'block';
-      }
+      displayStudentExistingPhoto(currentStudent);
     }
 
     // Khóa/Mở khu vực chụp ảnh nếu học sinh đã success và không phải Giáo viên

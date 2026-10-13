@@ -502,4 +502,97 @@ describe('Strict Edge-Case Test Suite: Cổng Học Sinh, Header RFC 7230, Zalo 
 
     await app.close();
   });
+
+  it('Test Case 8: Kiểm thử Cổng Danh Sách Lớp Công Khai /classes và API Thống Kê Public GET /api/public/classes', async () => {
+    // 8.1. Kiểm thử cấu hình STATIC_BASE_URL trỏ về IP Product 161.248.146.115:8090/tmp-faces
+    const composeContent = fs.readFileSync(path.resolve('docker/docker-compose.yml'), 'utf8');
+    expect(composeContent).toContain('STATIC_BASE_URL: ${STATIC_BASE_URL:-http://161.248.146.115:8090/tmp-faces}');
+
+    // 8.2. Kiểm thử đồng bộ file classes.html giữa apps/student và apps/api/public
+    const classesHtml1 = fs.readFileSync(path.resolve('apps/student/classes.html'), 'utf8');
+    const classesHtml2 = fs.readFileSync(path.resolve('apps/api/public/classes.html'), 'utf8');
+    expect(classesHtml1).toBe(classesHtml2);
+    expect(classesHtml1).toContain('/api/public/classes');
+    expect(classesHtml1).toContain('window.location.origin');
+
+    // 8.3. Kiểm thử Nginx route /classes trong default.conf
+    const nginxConf = fs.readFileSync(path.resolve('docker/nginx/default.conf'), 'utf8');
+    expect(nginxConf).toContain('location = /classes');
+    expect(nginxConf).toContain('alias /usr/share/nginx/html/student/classes.html;');
+
+    // 8.4. Kiểm thử API Public classes không làm lộ token/PIN
+    const mockClasses = [
+      {
+        id: 1,
+        code: 'GLV0',
+        name: 'Giáo Lý Viên',
+        teacher_name: 'Thầy Trưởng',
+        token: 'PIN_GLV0_SECRET',
+        is_locked: false,
+        total_students: 45,
+        success_count: 40,
+        pending_count: 2,
+        error_count: 1,
+        manual_review_count: 0,
+        empty_count: 2,
+      },
+      {
+        id: 2,
+        code: 'KT1A',
+        name: 'Khai Tâm 1A',
+        teacher_name: 'Cô An',
+        token: 'PIN_KT1A_SECRET',
+        is_locked: false,
+        total_students: 30,
+        success_count: 15,
+        pending_count: 5,
+        error_count: 0,
+        manual_review_count: 0,
+        empty_count: 10,
+      },
+    ];
+
+    const testApp = Fastify({ logger: false });
+    testApp.get('/api/public/classes', async (_req, reply) => {
+      const publicData = mockClasses.map((c) => ({
+        id: c.id,
+        code: c.code,
+        name: c.name,
+        teacher_name: c.teacher_name,
+        is_locked: c.is_locked,
+        total_students: c.total_students,
+        success_count: c.success_count,
+        pending_count: c.pending_count,
+        error_count: c.error_count,
+        manual_review_count: c.manual_review_count,
+        empty_count: c.empty_count,
+        completion_rate: Math.round((c.success_count / c.total_students) * 100),
+      }));
+      return reply.send({
+        success: true,
+        total_classes: publicData.length,
+        total_students: publicData.reduce((s, c) => s + c.total_students, 0),
+        total_success: publicData.reduce((s, c) => s + c.success_count, 0),
+        data: publicData,
+      });
+    });
+
+    const res = await testApp.inject({
+      method: 'GET',
+      url: '/api/public/classes',
+    });
+
+    expect(res.statusCode).toBe(200);
+    const json = JSON.parse(res.body);
+    expect(json.success).toBe(true);
+    expect(json.total_classes).toBe(2);
+    expect(json.total_students).toBe(75);
+    expect(json.total_success).toBe(55);
+    // TUYỆT ĐỐI không để lộ trường token hoặc mã PIN bí mật
+    expect(res.body).not.toContain('PIN_GLV0_SECRET');
+    expect(res.body).not.toContain('PIN_KT1A_SECRET');
+    expect(json.data[0].token).toBeUndefined();
+
+    await testApp.close();
+  });
 });

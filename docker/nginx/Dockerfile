@@ -17,7 +17,7 @@ COPY apps/student/ ./apps/student/
 RUN npm ci --ignore-scripts || npm install
 RUN npm run build:packages
 RUN npm run build --workspace=@thanh-giuse/admin
-RUN mkdir -p apps/student/dist && cp apps/student/index.html apps/student/dist/index.html
+RUN mkdir -p apps/student/dist && cp apps/student/index.html apps/student/dist/index.html && cp apps/student/classes.html apps/student/dist/classes.html
 
 # -------------------------------------------------------------
 # STAGE 2: Nginx Runtime (Không có Node.js Runtime)

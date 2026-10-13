@@ -50,8 +50,8 @@ export const workerEnv = {
 
   hanet: {
     baseUrl: hanetBaseUrl,
-    token: process.env.HANET_ACCESS_TOKEN || 'mock_token',
-    placeId: process.env.HANET_PLACE_ID || '196',
+    token: process.env.HANET_ACCESS_TOKEN || '',
+    placeId: process.env.HANET_PLACE_ID || '998577',
     timeoutMs: 120_000,
     circuitBreakerThreshold: 3,
     circuitBreakerCooldownMs: 300_000,

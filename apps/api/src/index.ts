@@ -194,7 +194,7 @@ server.get<{ Params: { classId: string } }>(
         ? await classRepo.verifyTeacherPin(classRecord.id, teacherPin)
         : false;
 
-    applyClassPortalHeaders(reply, classRecord.code, classRecord.name, isTeacherVerified);
+    applyClassPortalHeaders(reply, rawParam.toUpperCase(), classRecord.name, isTeacherVerified);
     const students = await studentRepo.getStudentsByClassId(classRecord.id);
     return reply.send(students);
   }
@@ -669,6 +669,74 @@ server.post<{
       aliasId,
     },
   });
+});
+
+// 7a. Cổng Danh Sách Lớp Công Khai (/classes)
+server.get('/classes', async (_request, reply) => {
+  const filePath = path.join(publicPath, 'classes.html');
+  reply.type('text/html');
+  return reply.send(fs.readFileSync(filePath, 'utf-8'));
+});
+
+server.get('/classes/', async (_request, reply) => {
+  const filePath = path.join(publicPath, 'classes.html');
+  reply.type('text/html');
+  return reply.send(fs.readFileSync(filePath, 'utf-8'));
+});
+
+// 7b. API Thống Kê Public: Trả JSON tiến độ 29 lớp (không lộ PIN)
+server.options('/api/public/classes', async (_request, reply) => {
+  reply.header('Access-Control-Allow-Origin', '*');
+  reply.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  reply.header('Access-Control-Allow-Headers', 'Content-Type');
+  return reply.status(204).send();
+});
+
+server.get('/api/public/classes', async (_request, reply) => {
+  reply.header('Access-Control-Allow-Origin', '*');
+  reply.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  reply.header('Cache-Control', 'public, max-age=5, stale-while-revalidate=10');
+
+  try {
+    const rawClasses = await classRepo.getClassesWithStats();
+    const classes = rawClasses.map((c) => ({
+      id: c.id,
+      code: c.code,
+      name: c.name,
+      teacher_name: c.teacher_name || '',
+      is_locked: c.is_locked,
+      total_students: Number(c.total_students) || 0,
+      success_count: Number(c.success_count) || 0,
+      pending_count: Number(c.pending_count) || 0,
+      error_count: Number(c.error_count) || 0,
+      manual_review_count: Number(c.manual_review_count) || 0,
+      empty_count: Number(c.empty_count) || 0,
+      completion_rate:
+        Number(c.total_students) > 0
+          ? Math.round((Number(c.success_count) / Number(c.total_students)) * 100)
+          : 0,
+    }));
+
+    const totalStudents = classes.reduce((sum, c) => sum + c.total_students, 0);
+    const totalSuccess = classes.reduce((sum, c) => sum + c.success_count, 0);
+    const overallRate = totalStudents > 0 ? Math.round((totalSuccess / totalStudents) * 100) : 0;
+
+    return reply.status(200).send({
+      success: true,
+      total_classes: classes.length,
+      total_students: totalStudents,
+      total_success: totalSuccess,
+      overall_completion_rate: overallRate,
+      data: classes,
+    });
+  } catch (err: any) {
+    server.log.error(err, 'Lỗi khi lấy danh sách public classes');
+    return reply.status(500).send({
+      success: false,
+      error: 'Internal Server Error',
+      message: 'Không thể tải thống kê danh sách lớp.',
+    });
+  }
 });
 
 // 8. API Health Check
