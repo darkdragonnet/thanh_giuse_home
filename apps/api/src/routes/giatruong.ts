@@ -205,23 +205,41 @@ export async function triggerLiveBroadcastIfEligible(
     const liveData = await computeLiveStatus(pool, redis, 10);
     const milestone = `${liveData.totalSubmittedVotes}/40 phiếu`;
 
-    // 5. Gọi Webhook n8n (Non-blocking)
-    const webhookUrl = process.env.N8N_LIVE_WEBHOOK_URL || 'https://n8nhome.gaudetedomino.io.vn/webhook/live-voting-broadcast';
+    // 5. Định dạng bản tin Zalo trực tiếp gửi vào nhóm Ban Điều Hành
+    const timeStr = new Date().toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const topText = liveData.topEstimated
+      .map((c, i) => `${i + 1}. ${c.name}: ${c.total_estimated} phiếu (Chính thức: ${c.official_votes})`)
+      .join('\n');
 
-    fetch(webhookUrl, {
+    const customText = liveData.customDraftCount > 0
+      ? `\n🔒 (Ghi nhận có ${liveData.customDraftCount} lượt chọn ẩn danh cho các nhân tố mới ngoài danh sách)`
+      : '';
+
+    const zaloMessage = `📊 [TRỰC TIẾP BẦU CỬ GIA TRƯỞNG] - Cập nhật tiến độ (${milestone})
+⏰ Thời gian: ${timeStr}
+🗳️ Đã nộp: ${liveData.totalSubmittedVotes}/40 cử tri
+👥 Đang thao tác nháp: ${liveData.activeDraftingCount} cử tri
+
+🏆 TOP 10 ỨNG VIÊN DẪN ĐẦU (TẠM THỜI):
+${topText}${customText}
+
+👉 Cử tri tiếp tục bỏ phiếu tại: https://thanhgiuse.gaudetedomino.io.vn/giatruong/`;
+
+    const targetThreadId = process.env.ZALO_GIATRUONG_GROUP_ID || '8686690356639968363';
+    const zaloBroadcastUrl = process.env.N8N_ZALO_BROADCAST_URL || 'https://n8nhome.gaudetedomino.io.vn/webhook/broadcast-zalo?token=LongDen1982';
+
+    // Gọi trực tiếp webhook n8n Zalo Sender (Non-blocking)
+    fetch(zaloBroadcastUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        event: 'VOTE_SUBMITTED_MILESTONE',
-        total_submitted: liveData.totalSubmittedVotes,
-        milestone,
-        active_drafting_count: liveData.activeDraftingCount,
-        top_estimated: liveData.topEstimated,
-        server_time: new Date().toISOString(),
+        thread_id: targetThreadId,
+        chat_type: 'group',
+        message: zaloMessage,
       }),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(6000),
     }).catch((wErr: any) => {
-      log?.warn?.({ err: wErr.message }, '[N8N LIVE WEBHOOK TRIGGER FAILED]');
+      log?.warn?.({ err: wErr.message }, '[ZALO BROADCAST DIRECT TRIGGER FAILED]');
     });
 
     return { triggered: true, milestone };
