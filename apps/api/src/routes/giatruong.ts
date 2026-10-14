@@ -48,6 +48,189 @@ export function computeIdentityKey(voter_name?: string, voter_phone?: string): {
   };
 }
 
+export async function computeLiveStatus(
+  pool: Pool,
+  redis: Redis | undefined,
+  limit: number = 10
+): Promise<{
+  activeDraftingCount: number;
+  totalSubmittedVotes: number;
+  customDraftCount: number;
+  topEstimated: Array<{
+    id: number;
+    name: string;
+    is_incumbent: boolean;
+    official_votes: number;
+    draft_votes: number;
+    total_estimated: number;
+  }>;
+}> {
+  const now = Date.now();
+  const tenMinutesAgo = now - 10 * 60 * 1000;
+
+  let activeDraftingCount = 0;
+  const draftTallyMap: Record<number, number> = {};
+  let customDraftCount = 0;
+
+  if (redis) {
+    // Dọn dẹp session cũ quá 10 phút và đếm O(1)
+    await redis.zremrangebyscore('giatruong:active_sessions', 0, tenMinutesAgo);
+    activeDraftingCount = await redis.zcard('giatruong:active_sessions');
+
+    // Lấy danh sách session ID còn hoạt động
+    const activeIds = await redis.zrange('giatruong:active_sessions', 0, -1);
+    if (activeIds.length > 0) {
+      const keys = activeIds.map((id: string) => `giatruong:draft:${id}`);
+      const draftResults = await redis.mget(...keys);
+
+      for (const rawDraft of draftResults) {
+        if (!rawDraft) continue;
+        try {
+          const picks: Array<number | string> = JSON.parse(rawDraft);
+          if (Array.isArray(picks)) {
+            for (const p of picks) {
+              if (typeof p === 'number' && Number.isInteger(p)) {
+                draftTallyMap[p] = (draftTallyMap[p] || 0) + 1;
+              } else if (p) {
+                // Cử tri tự nhập nhân tố mới -> gom vào Secret Ballot count
+                customDraftCount++;
+              }
+            }
+          }
+        } catch {
+          // Ignore parse error
+        }
+      }
+    }
+  }
+
+  // Lấy tổng số phiếu Bầu Thật đã hoàn tất
+  const submittedRes = await pool.query(
+    'SELECT COUNT(*) as total_submitted FROM giatruong.votes WHERE is_trial = FALSE'
+  );
+  const totalSubmittedVotes = parseInt(submittedRes.rows[0]?.total_submitted || '0', 10);
+
+  // Thống kê phiếu bầu thật đã nộp chính thức cho từng ứng viên
+  const officialTallyRes = await pool.query(`
+    SELECT c.id, c.name, c.is_incumbent, COUNT(vd.id) as official_votes
+    FROM giatruong.candidates c
+    LEFT JOIN giatruong.vote_details vd ON c.id = vd.candidate_id
+    LEFT JOIN giatruong.votes v ON vd.vote_id = v.id AND v.is_trial = FALSE
+    WHERE c.is_active = TRUE
+    GROUP BY c.id, c.name, c.is_incumbent
+  `);
+
+  // Kết hợp Phiếu Chính Thức + Phiếu Nháp đang chọn
+  const combinedCandidates = officialTallyRes.rows.map((r) => {
+    const candId = parseInt(r.id, 10);
+    const officialVotes = parseInt(r.official_votes || '0', 10);
+    const draftVotes = draftTallyMap[candId] || 0;
+    const totalEstimated = officialVotes + draftVotes;
+
+    return {
+      id: candId,
+      name: r.name,
+      is_incumbent: Boolean(r.is_incumbent),
+      official_votes: officialVotes,
+      draft_votes: draftVotes,
+      total_estimated: totalEstimated,
+    };
+  });
+
+  // Sắp xếp giảm dần theo tổng ước tính (kết hợp)
+  combinedCandidates.sort((a, b) => {
+    if (b.total_estimated !== a.total_estimated) {
+      return b.total_estimated - a.total_estimated;
+    }
+    if (b.is_incumbent !== a.is_incumbent) {
+      return (b.is_incumbent ? 1 : 0) - (a.is_incumbent ? 1 : 0);
+    }
+    return a.id - b.id;
+  });
+
+  const topEstimated = combinedCandidates.slice(0, limit);
+
+  return {
+    activeDraftingCount,
+    totalSubmittedVotes,
+    customDraftCount,
+    topEstimated,
+  };
+}
+
+export async function triggerLiveBroadcastIfEligible(
+  pool: Pool,
+  redis: Redis | undefined,
+  log?: any
+): Promise<{ triggered: boolean; reason?: string; milestone?: string; votesSinceLast?: number; timeSinceLast?: number }> {
+  if (!redis) return { triggered: false, reason: 'no_redis' };
+
+  try {
+    // 1. Chỉ phát khi đang ở chế độ Bầu Thật (real_only)
+    const statusRes = await pool.query("SELECT value FROM giatruong.settings WHERE key = 'voting_status'");
+    if (statusRes.rows[0]?.value !== 'real_only') {
+      return { triggered: false, reason: 'not_real_only' };
+    }
+
+    // 2. Tính số phiếu bầu thật hiện tại
+    const countRes = await pool.query('SELECT COUNT(*) as cnt FROM giatruong.votes WHERE is_trial = FALSE');
+    const totalSubmitted = parseInt(countRes.rows[0]?.cnt || '0', 10);
+    if (totalSubmitted <= 0) return { triggered: false, reason: 'zero_votes' };
+
+    // 3. Kiểm tra mốc & thời gian phát sóng trong Redis
+    const state = await redis.hgetall('giatruong:broadcast_state');
+    const lastTs = parseInt(state.last_ts || '0', 10);
+    const lastCount = parseInt(state.last_count || '0', 10);
+    const now = Date.now();
+    const votesSinceLast = totalSubmitted - lastCount;
+    const timeSinceLast = now - lastTs;
+
+    // Khoảng 40 cử tri -> gom ~10 mốc:
+    // - Mốc phiếu: Cứ tăng thêm 4 phiếu (4, 8, 12, 16, 20, 24, 28, 32, 36, 40)
+    // - Hoặc giãn cách tối thiểu 45s nếu có ít nhất 1 phiếu mới
+    const isMilestone = totalSubmitted % 4 === 0 || votesSinceLast >= 4;
+    const isTimeThrottle = timeSinceLast >= 45000 && votesSinceLast >= 1;
+
+    if (!isMilestone && !isTimeThrottle && totalSubmitted < 40) {
+      return { triggered: false, reason: 'throttled', votesSinceLast, timeSinceLast };
+    }
+
+    // Cập nhật state vào Redis
+    await redis.hset('giatruong:broadcast_state', {
+      last_ts: String(now),
+      last_count: String(totalSubmitted),
+    });
+
+    // 4. Lấy Top 10 ứng viên dẫn đầu
+    const liveData = await computeLiveStatus(pool, redis, 10);
+    const milestone = `${liveData.totalSubmittedVotes}/40 phiếu`;
+
+    // 5. Gọi Webhook n8n (Non-blocking)
+    const webhookUrl = process.env.N8N_LIVE_WEBHOOK_URL || 'https://n8nhome.gaudetedomino.io.vn/webhook/live-voting-broadcast';
+
+    fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: 'VOTE_SUBMITTED_MILESTONE',
+        total_submitted: liveData.totalSubmittedVotes,
+        milestone,
+        active_drafting_count: liveData.activeDraftingCount,
+        top_estimated: liveData.topEstimated,
+        server_time: new Date().toISOString(),
+      }),
+      signal: AbortSignal.timeout(5000),
+    }).catch((wErr: any) => {
+      log?.warn?.({ err: wErr.message }, '[N8N LIVE WEBHOOK TRIGGER FAILED]');
+    });
+
+    return { triggered: true, milestone };
+  } catch (err: any) {
+    log?.error?.(err, '[TRIGGER LIVE BROADCAST ERROR]');
+    return { triggered: false, reason: err.message };
+  }
+}
+
 export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
   const pool = fastify.pg as Pool;
   const redis = (fastify as any).redis as Redis | undefined;
@@ -315,101 +498,23 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // =========================================================================
-  // 6. GET /live-status: Trực tiếp tiến độ 8 phút (Non-blocking, Secret Ballot)
+  // 4. GET /live-status: Trực tiếp tiến độ 8 phút (Non-blocking, Secret Ballot, Top 10)
   // =========================================================================
-  fastify.get('/live-status', async (_request, reply) => {
+  fastify.get<{
+    Querystring: {
+      limit?: string;
+    };
+  }>('/live-status', async (request, reply) => {
     try {
-      const now = Date.now();
-      const tenMinutesAgo = now - 10 * 60 * 1000;
-
-      let activeDraftingCount = 0;
-      const draftTallyMap: Record<number, number> = {};
-      let customDraftCount = 0;
-
-      if (redis) {
-        // Dọn dẹp session cũ quá 10 phút và đếm O(1)
-        await redis.zremrangebyscore('giatruong:active_sessions', 0, tenMinutesAgo);
-        activeDraftingCount = await redis.zcard('giatruong:active_sessions');
-
-        // Lấy danh sách session ID còn hoạt động
-        const activeIds = await redis.zrange('giatruong:active_sessions', 0, -1);
-        if (activeIds.length > 0) {
-          const keys = activeIds.map((id: string) => `giatruong:draft:${id}`);
-          const draftResults = await redis.mget(...keys);
-
-          for (const rawDraft of draftResults) {
-            if (!rawDraft) continue;
-            try {
-              const picks: Array<number | string> = JSON.parse(rawDraft);
-              if (Array.isArray(picks)) {
-                for (const p of picks) {
-                  if (typeof p === 'number' && Number.isInteger(p)) {
-                    draftTallyMap[p] = (draftTallyMap[p] || 0) + 1;
-                  } else if (p) {
-                    // Cử tri tự nhập nhân tố mới -> gom vào Secret Ballot count
-                    customDraftCount++;
-                  }
-                }
-              }
-            } catch {
-              // Ignore parse error
-            }
-          }
-        }
-      }
-
-      // Lấy tổng số phiếu Bầu Thật đã hoàn tất
-      const submittedRes = await pool.query(
-        'SELECT COUNT(*) as total_submitted FROM giatruong.votes WHERE is_trial = FALSE'
-      );
-      const totalSubmittedVotes = parseInt(submittedRes.rows[0]?.total_submitted || '0', 10);
-
-      // Thống kê phiếu bầu thật đã nộp chính thức cho từng ứng viên
-      const officialTallyRes = await pool.query(`
-        SELECT c.id, c.name, c.is_incumbent, COUNT(vd.id) as official_votes
-        FROM giatruong.candidates c
-        LEFT JOIN giatruong.vote_details vd ON c.id = vd.candidate_id
-        LEFT JOIN giatruong.votes v ON vd.vote_id = v.id AND v.is_trial = FALSE
-        WHERE c.is_active = TRUE
-        GROUP BY c.id, c.name, c.is_incumbent
-      `);
-
-      // Kết hợp Phiếu Chính Thức + Phiếu Nháp đang chọn
-      const combinedCandidates = officialTallyRes.rows.map((r) => {
-        const candId = parseInt(r.id, 10);
-        const officialVotes = parseInt(r.official_votes || '0', 10);
-        const draftVotes = draftTallyMap[candId] || 0;
-        const totalEstimated = officialVotes + draftVotes;
-
-        return {
-          id: candId,
-          name: r.name,
-          is_incumbent: Boolean(r.is_incumbent),
-          official_votes: officialVotes,
-          draft_votes: draftVotes,
-          total_estimated: totalEstimated,
-        };
-      });
-
-      // Sắp xếp giảm dần theo tổng ước tính (kết hợp)
-      combinedCandidates.sort((a, b) => {
-        if (b.total_estimated !== a.total_estimated) {
-          return b.total_estimated - a.total_estimated;
-        }
-        if (b.is_incumbent !== a.is_incumbent) {
-          return (b.is_incumbent ? 1 : 0) - (a.is_incumbent ? 1 : 0);
-        }
-        return a.id - b.id;
-      });
-
-      const topEstimated = combinedCandidates.slice(0, 8);
+      const limit = parseInt(request.query?.limit || '10', 10);
+      const liveData = await computeLiveStatus(pool, redis, limit);
 
       return reply.send({
         success: true,
-        active_drafting_count: activeDraftingCount,
-        total_submitted_votes: totalSubmittedVotes,
-        custom_candidates_draft_count: customDraftCount,
-        top_estimated: topEstimated,
+        active_drafting_count: liveData.activeDraftingCount,
+        total_submitted_votes: liveData.totalSubmittedVotes,
+        custom_candidates_draft_count: liveData.customDraftCount,
+        top_estimated: liveData.topEstimated,
         server_time: new Date().toISOString(),
       });
     } catch (err: any) {
@@ -560,6 +665,13 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
         } catch (rErr) {
           fastify.log.warn(rErr, '[REDIS DRAFT CLEANUP WARN]');
         }
+      }
+
+      // Kích hoạt phát sóng Zalo theo mốc submit (~10 mốc cả buổi 40 cử tri)
+      if (!session.is_trial) {
+        setImmediate(() => {
+          triggerLiveBroadcastIfEligible(pool, redis, fastify.log);
+        });
       }
 
       return reply.send({

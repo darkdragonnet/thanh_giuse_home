@@ -185,7 +185,7 @@ describe('Hệ Thống Bỏ Phiếu Ban Đại Diện Gia Trưởng (End-to-End 
       body: JSON.stringify({ voting_status: 'real_only' }),
     });
 
-    const realPhone = '0933445566';
+    const realPhone = '093' + Math.floor(1000000 + Math.random() * 9000000);
 
     // Bắt đầu phiên bầu thật
     const startRes = await fetch(`${BASE_URL}/giatruong/api/session/start`, {
@@ -322,7 +322,7 @@ describe('Hệ Thống Bỏ Phiếu Ban Đại Diện Gia Trưởng (End-to-End 
     // Secret Ballot: Ứng viên tự gõ được gom vào custom_candidates_draft_count
     assert.ok(data.custom_candidates_draft_count >= 1);
     assert.ok(Array.isArray(data.top_estimated));
-    assert.ok(data.top_estimated.length <= 8);
+    assert.ok(data.top_estimated.length <= 10);
     // Tuyệt đối không để lộ tên 'Ông Hàng Xóm Tự Gõ' trong danh sách ứng viên công khai
     const leaked = data.top_estimated.some((c: any) => c.name === 'Ông Hàng Xóm Tự Gõ');
     assert.equal(leaked, false, 'Vi phạm Secret Ballot: Lộ tên ứng viên tự gõ khi chưa chốt sổ!');
@@ -330,7 +330,7 @@ describe('Hệ Thống Bỏ Phiếu Ban Đại Diện Gia Trưởng (End-to-End 
 
   it('15. Chống đếm trùng: Submit phiếu thành công sẽ dọn dẹp Redis draft và active count', async () => {
     // Tạo session mới để test dọn dẹp
-    const voterPhone = '0944556677';
+    const voterPhone = '094' + Math.floor(1000000 + Math.random() * 9000000);
     const startRes = await fetch(`${BASE_URL}/giatruong/api/session/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -363,5 +363,14 @@ describe('Hệ Thống Bỏ Phiếu Ban Đại Diện Gia Trưởng (End-to-End 
     // Kiểm tra lại live-status: session đã được dọn khỏi ZSET
     const statusAfter = await (await fetch(`${BASE_URL}/giatruong/api/live-status`)).json();
     assert.equal(statusAfter.active_drafting_count, countBefore - 1);
+  });
+
+  it('16. Milestone & Top 10 Broadcast: live-status trả về tối đa 10 ứng viên dẫn đầu', async () => {
+    const liveRes = await fetch(`${BASE_URL}/giatruong/api/live-status?limit=10`);
+    const liveData = await liveRes.json();
+    assert.equal(liveRes.status, 200);
+    assert.equal(liveData.success, true);
+    assert.ok(liveData.top_estimated.length <= 10);
+    assert.ok(typeof liveData.total_submitted_votes === 'number');
   });
 });
