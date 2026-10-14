@@ -21,6 +21,7 @@ import { createRegistrationQueue } from './queue.js';
 import { AdminRequestRepository } from './repositories/admin-request.repository.js';
 import { adminRoutes } from './routes/admin.js';
 import { webhookRoutes } from './routes/webhooks.js';
+import { giatruongRoutes } from './routes/giatruong.js';
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -100,6 +101,38 @@ await server.register(adminRoutes, { prefix: '/api/admin' });
 
 // Đăng ký Webhook Receiver (/api/webhooks/*)
 await server.register(webhookRoutes, { prefix: '/api/webhooks' });
+
+// =============================================================================
+// HỆ THỐNG BỎ PHIẾU BAN ĐẠI DIỆN GIA TRƯỞNG (MODULE MƯỢN DOCKER SERVICE)
+// =============================================================================
+const giatruongPublicPath = path.resolve(__dirname, '../public/giatruong');
+if (!fs.existsSync(giatruongPublicPath)) {
+  fs.mkdirSync(giatruongPublicPath, { recursive: true });
+}
+
+await server.register(fastifyStatic, {
+  root: giatruongPublicPath,
+  prefix: '/giatruong/',
+  decorateReply: false,
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  },
+});
+
+server.get('/giatruong', async (_req, reply) => {
+  return reply.redirect('/giatruong/');
+});
+
+server.get('/giatruong/ket-qua', async (_req, reply) => {
+  return reply.redirect('/giatruong/admin.html');
+});
+
+// Đăng ký toàn bộ API Bỏ Phiếu Gia Trưởng (/giatruong/api/*)
+await server.register(giatruongRoutes, { prefix: '/giatruong/api' });
 
 // Hàm tiện ích mã hóa an toàn Header ASCII (RFC 7230 / RFC 8187)
 // Triệt tiêu lỗi TypeError [ERR_INVALID_CHAR] và chống CRLF Header Injection (\r\n -> %0D%0A)

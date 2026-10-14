@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Bỏ Phiếu Ban Đại Diện - Cộng Đoàn Gia Trưởng</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .sticky-timer { position: sticky; top: 0; z-index: 50; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 antialiased min-h-screen">
+  <div class="max-w-md mx-auto p-4 pb-20" x-data="voteApp()" x-init="init()" x-cloak>
+
+    <!-- ==================== CHẶNG 1: MÀN HÌNH BẮT ĐẦU (1 NÚT DUY NHẤT) ==================== -->
+    <div x-show="stage === 1" class="space-y-4">
+      <div class="bg-indigo-700 text-white p-5 rounded-2xl shadow-md text-center">
+        <h1 class="text-xl font-bold uppercase tracking-wide">Bầu Cử Ban Đại Diện</h1>
+        <p class="text-xs text-indigo-200 mt-1 font-medium">Cộng Đoàn Gia Trưởng Giáo Xứ</p>
+      </div>
+
+      <!-- Hướng dẫn thích ứng theo chế độ Admin -->
+      <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 space-y-2">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+          <span class="text-xs font-bold uppercase text-slate-700">Chế độ hiện tại:</span>
+          <span class="text-xs font-bold px-2.5 py-0.5 rounded-full"
+                :class="{
+                  'bg-amber-100 text-amber-800': config.voting_status === 'trial_only',
+                  'bg-emerald-100 text-emerald-800': config.voting_status === 'real_only',
+                  'bg-rose-100 text-rose-800': config.voting_status === 'closed'
+                }"
+                x-text="statusBadgeText"></span>
+        </div>
+        <p class="text-xs text-slate-600 leading-relaxed" x-text="statusDescription"></p>
+      </div>
+
+      <!-- Nhập thông tin cử tri -->
+      <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 space-y-3">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">
+            Họ & Tên Cử Tri <span class="text-xs font-normal text-slate-400 normal-case">(hoặc nhập SĐT bên dưới)</span>
+          </label>
+          <input type="text" x-model="voterName" @input="saveDraftInfo(); handleNameInput();" placeholder="Ví dụ: Giuse Nguyễn Văn A..." 
+                 class="w-full px-3.5 py-2.5 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500 border-slate-200 bg-slate-50 focus:bg-white transition">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">
+            Số Điện Thoại <span class="text-xs font-normal text-slate-400 normal-case">(hoặc nhập Họ Tên ở trên)</span>
+          </label>
+          <input type="tel" x-model="voterPhone" @input="handlePhoneInput()" placeholder="Ví dụ: 0901234567..." 
+                 class="w-full px-3.5 py-2.5 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500 border-slate-200 bg-slate-50 focus:bg-white transition">
+        </div>
+        <div class="text-[11px] text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-200">
+          💡 Cử tri chỉ cần điền <b>Họ tên</b> HOẶC <b>Số điện thoại</b> (hoặc cả hai) là có thể bấm Bắt đầu bình chọn.
+        </div>
+      </div>
+
+      <div x-show="errorMessage" class="p-3 bg-red-100 text-red-700 text-xs rounded-xl font-medium border border-red-200" x-text="errorMessage"></div>
+
+      <!-- KHU VỰC 1 NÚT HÀNH ĐỘNG DUY NHẤT DO ADMIN ĐIỀU KHIỂN -->
+      <div class="pt-2">
+        <!-- Chế độ Bầu Thử -->
+        <template x-if="config.voting_status === 'trial_only'">
+          <button type="button" @click="handleStartClick(true)" :disabled="!isFormValid || loading"
+                  class="w-full py-4 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-extrabold text-sm rounded-2xl shadow-lg transition transform active:scale-95 flex items-center justify-center space-x-2">
+            <span x-show="!loading">🧪 BẮT ĐẦU BÌNH CHỌN THỬ (<span x-text="config.trial_duration_minutes"></span> PHÚT)</span>
+            <span x-show="loading">Đang kết nối...</span>
+          </button>
+        </template>
+
+        <!-- Chế độ Bầu Thật -->
+        <template x-if="config.voting_status === 'real_only'">
+          <button type="button" @click="handleStartClick(false)" :disabled="!isFormValid || loading"
+                  class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-extrabold text-sm rounded-2xl shadow-lg transition transform active:scale-95 flex items-center justify-center space-x-2">
+            <span x-show="!loading">🗳️ BẮT ĐẦU BẦU CHÍNH THỨC (<span x-text="config.real_duration_minutes"></span> PHÚT)</span>
+            <span x-show="loading">Đang kết nối...</span>
+          </button>
+        </template>
+
+        <!-- Chế độ Đóng Cổng -->
+        <template x-if="config.voting_status === 'closed'">
+          <button type="button" disabled class="w-full py-4 bg-slate-200 text-slate-500 font-bold text-sm rounded-2xl cursor-not-allowed text-center border border-slate-300">
+            ⛔ CỔNG BÌNH CHỌN ĐANG TẠM ĐÓNG
+          </button>
+        </template>
+      </div>
+
+      <div class="text-center pt-2">
+        <a href="/giatruong/ket-qua" class="text-xs text-indigo-600 font-semibold hover:underline">
+          📊 Xem Bảng Xếp Hạng Kết Quả Hiện Tại
+        </a>
+      </div>
+    </div>
+
+    <!-- ==================== CHẶNG 2: MÀN HÌNH BẦU CỬ & ĐỒNG HỒ CÓ ÂM THANH ==================== -->
+    <div x-show="stage === 2" class="space-y-4">
+      
+      <!-- STICKY HEADER ĐỒNG HỒ ĐỔI 3 MÀU KÈM NÚT BẬT/TẮT ÂM -->
+      <div class="sticky-timer bg-white/95 backdrop-blur-md shadow-md rounded-2xl p-3 border border-slate-200">
+        <div class="flex justify-between items-center mb-1.5">
+          <div class="flex items-center space-x-2">
+            <span class="text-xs font-bold uppercase px-2 py-0.5 rounded"
+                  :class="isTrialSession ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-800'"
+                  x-text="isTrialSession ? 'Bầu Thử' : 'Bầu Thật'"></span>
+            <!-- Nút bật/tắt âm thanh -->
+            <button type="button" @click="toggleSound()" class="text-xs px-2 py-0.5 rounded border border-slate-200 text-slate-600 hover:bg-slate-50 transition">
+              <span x-text="soundEnabled ? '🔊 Bật âm' : '🔇 Tắt âm'"></span>
+            </button>
+          </div>
+
+          <!-- Đồng hồ số đổi màu -->
+          <div class="text-base font-mono font-black tracking-wider" :class="timerColorClass" x-text="'⏳ ' + timerFormatted"></div>
+        </div>
+
+        <!-- Thanh vạch tiến trình -->
+        <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+          <div class="h-full transition-all duration-1000" :class="progressBarColorClass" :style="'width: ' + progressPercent + '%'"></div>
+        </div>
+      </div>
+
+      <!-- Khung 8 ô chọn ứng viên -->
+      <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+        <div class="flex justify-between items-center mb-3">
+          <span class="text-xs font-bold text-slate-700 uppercase">Danh Sách 8 Vị Trí Cần Bầu</span>
+          <span class="text-xs font-bold px-2 py-0.5 rounded-full" :class="selectedCount === 8 ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'">
+            Đã chọn: <span x-text="selectedCount"></span>/8
+          </span>
+        </div>
+
+        <div class="space-y-2.5">
+          <template x-for="(slot, idx) in slots" :key="idx">
+            <div class="p-2.5 bg-slate-50 border rounded-xl transition" :class="slot.selected ? 'border-indigo-200 bg-indigo-50/20' : 'border-slate-200'">
+              <div class="flex justify-between items-center mb-1">
+                <span class="text-[11px] font-bold text-indigo-700 uppercase" x-text="'Vị trí số ' + (idx + 1)"></span>
+                <button type="button" x-show="slot.selected" @click="clearSlot(idx)" class="text-[11px] text-red-500 hover:underline font-semibold">Đổi người</button>
+              </div>
+
+              <!-- Trạng thái đã chọn người -->
+              <div x-show="slot.selected" class="flex justify-between items-center bg-white px-3 py-2 rounded-lg border border-indigo-200 shadow-sm">
+                <span class="text-sm text-slate-900" :class="slot.selected && slot.selected.is_incumbent ? 'italic' : 'font-semibold'" x-text="slot.selected ? slot.selected.name : ''"></span>
+                <div class="flex space-x-1">
+                  <span x-show="slot.selected && slot.selected.is_incumbent" class="text-[10px] bg-slate-100 text-slate-600 italic font-normal px-1.5 py-0.5 rounded border border-slate-200">Đương nhiệm</span>
+                  <span x-show="slot.selected && slot.selected.isNew" class="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded">Tự thêm</span>
+                </div>
+              </div>
+
+              <!-- Trạng thái chưa chọn -->
+              <div x-show="!slot.selected" class="relative" @click.outside="if (activeDropdown === idx) activeDropdown = null">
+                <input type="text" x-model="slot.search" 
+                       @focus="activeDropdown = idx" 
+                       @click="activeDropdown = idx"
+                       placeholder="Gõ tên tìm kiếm hoặc chọn danh sách bên dưới..." 
+                       class="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:ring-1 focus:ring-indigo-500 border-slate-300 bg-white">
+
+                <div x-show="activeDropdown === idx" 
+                     class="absolute z-30 left-0 right-0 mt-1 bg-white border border-slate-300 rounded-xl shadow-xl max-h-56 overflow-y-auto divide-y divide-slate-100">
+                  <!-- Gợi ý thêm người mới ngoài danh sách -->
+                  <div x-show="slot.search.trim().length > 1 && !exactExists(slot.search)" 
+                       @mousedown.prevent="addNewCandidate(idx, slot.search)" 
+                       class="px-3 py-2.5 bg-indigo-50 hover:bg-indigo-100 cursor-pointer text-xs text-indigo-800 flex justify-between items-center active:bg-indigo-200">
+                    <span>Thêm người mới: "<strong x-text="slot.search.trim()"></strong>"</span>
+                    <span class="text-[10px] bg-indigo-600 text-white font-bold px-2 py-0.5 rounded-full shadow-sm">+ Thêm</span>
+                  </div>
+
+                  <!-- Danh sách ứng viên gợi ý -->
+                  <template x-for="item in getFiltered(slot.search)" :key="item.id">
+                    <div @mousedown.prevent="selectCandidate(idx, item)" 
+                         class="px-3 py-2.5 hover:bg-slate-100 active:bg-indigo-50 cursor-pointer text-sm flex justify-between items-center transition">
+                      <span x-text="item.name" :class="item.is_incumbent ? 'italic text-slate-800 font-normal' : 'text-slate-800 font-normal'"></span>
+                      <span x-show="item.is_incumbent" class="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded italic font-normal border border-slate-200">Đương nhiệm</span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <div x-show="errorMessage" class="p-3 bg-red-100 text-red-700 text-xs rounded-xl font-medium border border-red-200" x-text="errorMessage"></div>
+
+      <!-- Nút Gửi Phiếu -->
+      <button type="button" @click="submitVote(false)" :disabled="loading || selectedCount !== 8" 
+              class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-extrabold text-sm rounded-2xl shadow-lg transition transform active:scale-95 flex items-center justify-center space-x-2">
+        <span x-show="!loading">XÁC NHẬN GỬI PHIẾU BẦU</span>
+        <span x-show="loading">Đang gửi phiếu...</span>
+      </button>
+    </div>
+
+    <!-- ==================== CHẶNG 3: MÀN HÌNH KẾT THÚC ==================== -->
+    <div x-show="stage === 3" class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 text-center space-y-4">
+      <div x-show="submitSuccess">
+        <div class="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto text-3xl font-bold shadow-inner">✓</div>
+        <h2 class="text-lg font-bold text-slate-900 mt-2" x-text="isTrialSession ? 'Hoàn thành Bầu Thử!' : 'Nộp phiếu thành công!'"></h2>
+        <p class="text-xs text-slate-600 mt-1 leading-relaxed" x-text="isTrialSession ? 'Lượt thử nghiệm đã được ghi nhận. Quý cử tri có thể thử lại để quen thao tác.' : 'Phiếu bầu chính thức của bạn đã được ghi nhận an toàn vào hệ thống. Xin chân thành cảm ơn!'"></p>
+      </div>
+
+      <div x-show="!submitSuccess">
+        <div class="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto text-3xl font-bold shadow-inner">✕</div>
+        <h2 class="text-lg font-bold text-slate-900 mt-2">Đã Hết Thời Gian Quy Định!</h2>
+        <p class="text-xs text-slate-600 mt-1 leading-relaxed" x-text="errorMessage"></p>
+      </div>
+
+      <div class="pt-3 space-y-2">
+        <button x-show="isTrialSession" @click="resetToStart()" class="w-full py-3.5 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-xl shadow transition">
+          🔄 Bình Chọn Thử Lại Lần Nữa
+        </button>
+        <a href="/giatruong/ket-qua" class="inline-block w-full py-3.5 bg-indigo-50 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200 hover:bg-indigo-100 transition">
+          📊 Xem Bảng Xếp Hạng Kết Quả
+        </a>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // Hàm chuẩn hóa loại bỏ dấu tiếng Việt phục vụ Fuzzy Search
+    function removeVietnameseTones(str) {
+      return (str || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/đ/g, 'd').replace(/Đ/g, 'D')
+        .toLowerCase()
+        .trim();
+    }
+
+    function voteApp() {
+      return {
+        stage: 1,
+        config: { voting_status: 'closed', real_duration_minutes: 8, trial_duration_minutes: 4, max_picks: 8 },
+        candidates: [],
+        voterName: '',
+        voterPhone: '',
+        sessionId: null,
+        isTrialSession: false,
+        totalSeconds: 480,
+        remainingSeconds: 480,
+        expiresAtMs: null,
+        serverOffsetMs: 0,
+        timerInterval: null,
+        slots: Array.from({ length: 8 }, () => ({ selected: null, search: '' })),
+        activeDropdown: null,
+        loading: false,
+        errorMessage: '',
+        submitSuccess: false,
+        
+        // Cấu hình âm thanh Web Audio API
+        audioCtx: null,
+        soundEnabled: true,
+        lastBeepSecond: null,
+
+        // Đồng bộ lượt chọn nháp lên server
+        draftDebounceTimer: null,
+
+        async init() {
+          this.loadDraftInfo();
+          await this.loadConfig();
+          await this.loadCandidates();
+          this.recoverSessionIfActive();
+
+          // Lắng nghe sự kiện quay lại trang từ background (Zalo wake up)
+          document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && this.stage === 2) {
+              this.syncTimerFromStorage();
+            }
+          });
+        },
+
+        get isFormValid() {
+          const cleanPhone = this.voterPhone.trim().replace(/\D/g, '');
+          const cleanName = this.voterName.trim();
+          return cleanName.length >= 2 || (cleanPhone.length >= 9 && cleanPhone.length <= 12);
+        },
+
+        get selectedCount() {
+          return this.slots.filter(s => s.selected !== null).length;
+        },
+
+        get statusBadgeText() {
+          if (this.config.voting_status === 'trial_only') return 'Bình chọn thử';
+          if (this.config.voting_status === 'real_only') return 'Bầu cử chính thức';
+          return 'Đang đóng cổng';
+        },
+
+        get statusDescription() {
+          if (this.config.voting_status === 'trial_only') {
+            return `Hệ thống đang mở phiên THỬ NGHIỆM (${this.config.trial_duration_minutes} phút) để cử tri làm quen với thao tác chọn và tìm kiếm.`;
+          }
+          if (this.config.voting_status === 'real_only') {
+            return `Hệ thống đang mở BẦU CHÍNH THỨC (${this.config.real_duration_minutes} phút). Mỗi cử tri chỉ được tham gia duy nhất 1 lần (1 người 1 phiếu).`;
+          }
+          return 'Cổng bình chọn hiện chưa mở. Xin quý cử tri vui lòng chờ thông báo từ Ban Tổ Chức.';
+        },
+
+        get timerFormatted() {
+          const m = Math.floor(this.remainingSeconds / 60);
+          const s = this.remainingSeconds % 60;
+          return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+        },
+
+        get progressPercent() {
+          return Math.max(0, Math.min(100, (this.remainingSeconds / this.totalSeconds) * 100));
+        },
+
+        get timerColorClass() {
+          if (this.remainingSeconds <= 30) return 'text-red-600 animate-pulse';
+          if (this.remainingSeconds <= 120) return 'text-amber-600';
+          return 'text-green-600';
+        },
+
+        get progressBarColorClass() {
+          if (this.remainingSeconds <= 30) return 'bg-red-500';
+          if (this.remainingSeconds <= 120) return 'bg-amber-500';
+          return 'bg-green-600';
+        },
+
+        async loadConfig() {
+          try {
+            const res = await fetch('/giatruong/api/config?v=' + Date.now());
+            const data = await res.json();
+            if (data.success) {
+              this.config = data;
+              if (data.server_time) {
+                this.serverOffsetMs = new Date(data.server_time).getTime() - Date.now();
+              }
+            }
+          } catch(e) {}
+        },
+
+        async loadCandidates() {
+          try {
+            const res = await fetch('/giatruong/api/candidates?v=' + Date.now());
+            const data = await res.json();
+            if (data.success) this.candidates = data.data;
+          } catch(e) {}
+        },
+
+        // Mở khóa AudioContext khi người dùng bấm nút
+        initAudioContext() {
+          try {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (AudioContext && !this.audioCtx) {
+              this.audioCtx = new AudioContext();
+            }
+            if (this.audioCtx && this.audioCtx.state === 'suspended') {
+              this.audioCtx.resume();
+            }
+            if (this.audioCtx) {
+              // Phát nốt câm để bypass Autoplay Policy
+              const osc = this.audioCtx.createOscillator();
+              const gain = this.audioCtx.createGain();
+              gain.gain.value = 0;
+              osc.connect(gain);
+              gain.connect(this.audioCtx.destination);
+              osc.start();
+              osc.stop(this.audioCtx.currentTime + 0.01);
+            }
+          } catch(e) {}
+        },
+
+        toggleSound() {
+          this.soundEnabled = !this.soundEnabled;
+          if (this.soundEnabled && this.audioCtx && this.audioCtx.state === 'suspended') {
+            this.audioCtx.resume();
+          }
+        },
+
+        // Phát tiếng tíc tắc trong 30 giây cuối
+        playTickingSound(second) {
+          if (!this.soundEnabled || !this.audioCtx) return;
+          try {
+            if (this.audioCtx.state === 'suspended') {
+              this.audioCtx.resume();
+            }
+            const osc = this.audioCtx.createOscillator();
+            const gain = this.audioCtx.createGain();
+            
+            // Tần số cao hơn ở 10 giây cuối để tăng tính cấp bách
+            osc.frequency.value = second <= 10 ? 950 : 750;
+            osc.type = 'sine';
+
+            gain.gain.setValueAtTime(0.12, this.audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, this.audioCtx.currentTime + 0.08);
+
+            osc.connect(gain);
+            gain.connect(this.audioCtx.destination);
+
+            osc.start();
+            osc.stop(this.audioCtx.currentTime + 0.08);
+          } catch(e) {}
+        },
+
+        saveDraftInfo() {
+          localStorage.setItem('giatruong_voter_info', JSON.stringify({
+            name: this.voterName,
+            phone: this.voterPhone
+          }));
+        },
+
+        loadDraftInfo() {
+          const saved = localStorage.getItem('giatruong_voter_info');
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved);
+              this.voterName = parsed.name || '';
+              this.voterPhone = parsed.phone || '';
+            } catch(e) {}
+          }
+        },
+
+        async handlePhoneInput() {
+          this.saveDraftInfo();
+          this.checkActiveSession();
+        },
+
+        async handleNameInput() {
+          this.saveDraftInfo();
+          this.checkActiveSession();
+        },
+
+        async checkActiveSession() {
+          const cleanPhone = this.voterPhone.trim().replace(/\D/g, '');
+          const cleanName = this.voterName.trim();
+          // Tự động khôi phục nếu mở WebView cô lập khi có SĐT hoặc Tên hợp lệ
+          if ((cleanPhone.length >= 9 || cleanName.length >= 2) && this.stage === 1) {
+            try {
+              const isTrial = this.config.voting_status === 'trial_only';
+              const query = new URLSearchParams({ is_trial: String(isTrial) });
+              if (cleanPhone.length >= 9) query.append('phone', cleanPhone);
+              if (cleanName.length >= 2) query.append('name', cleanName);
+
+              const res = await fetch(`/giatruong/api/session/active?${query.toString()}`);
+              const data = await res.json();
+              if (data.success && data.active) {
+                this.sessionId = data.session_id;
+                this.isTrialSession = data.is_trial;
+                this.voterName = data.voter_name || this.voterName;
+                if (data.voter_phone && !data.voter_phone.startsWith('name:')) {
+                  this.voterPhone = data.voter_phone;
+                }
+                this.expiresAtMs = new Date(data.expires_at).getTime();
+                this.totalSeconds = Math.max(1, data.remaining_seconds);
+                this.remainingSeconds = data.remaining_seconds;
+
+                // Khôi phục draft picks từ localStorage hoặc từ server
+                const savedDraft = localStorage.getItem(`giatruong_draft_picks_${this.sessionId}`);
+                if (savedDraft) {
+                  try { this.slots = JSON.parse(savedDraft); } catch(e) {}
+                } else if (data.draft_candidates && Array.isArray(data.draft_candidates)) {
+                  data.draft_candidates.forEach((cand, idx) => {
+                    if (idx < 8) {
+                      if (typeof cand === 'number') {
+                        const found = this.candidates.find(c => c.id === cand);
+                        if (found) this.slots[idx].selected = found;
+                      } else if (typeof cand === 'string' && cand.trim()) {
+                        this.slots[idx].selected = { id: null, name: cand.trim(), isNew: true, is_incumbent: false };
+                      }
+                    }
+                  });
+                }
+
+                this.stage = 2;
+                this.startTimer(this.expiresAtMs);
+                this.syncDraftToServer();
+              }
+            } catch(e) {}
+          }
+        },
+
+        async handleStartClick(isTrial) {
+          this.initAudioContext();
+          this.loading = true;
+          this.errorMessage = '';
+
+          try {
+            const res = await fetch('/giatruong/api/session/start', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                voter_name: this.voterName.trim(),
+                voter_phone: this.voterPhone.trim(),
+                is_trial: isTrial
+              })
+            });
+            const data = await res.json();
+            if (!data.success) {
+              this.errorMessage = data.message;
+              this.loading = false;
+              return;
+            }
+
+            this.sessionId = data.session_id;
+            this.isTrialSession = isTrial;
+            this.totalSeconds = data.duration_seconds;
+            this.remainingSeconds = data.duration_seconds;
+            this.expiresAtMs = new Date(data.expires_at).getTime();
+
+            if (data.server_time) {
+              this.serverOffsetMs = new Date(data.server_time).getTime() - Date.now();
+            }
+
+            // Lưu toàn diện vào localStorage
+            localStorage.setItem('giatruong_active_session', JSON.stringify({
+              sessionId: data.session_id,
+              isTrial: isTrial,
+              expiresAt: this.expiresAtMs,
+              totalSeconds: data.duration_seconds,
+              voterName: this.voterName,
+              voterPhone: this.voterPhone
+            }));
+
+            this.stage = 2;
+            this.startTimer(this.expiresAtMs);
+          } catch(e) {
+            this.errorMessage = 'Lỗi kết nối máy chủ. Vui lòng thử lại.';
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        startTimer(targetTimestamp) {
+          if (this.timerInterval) clearInterval(this.timerInterval);
+
+          this.timerInterval = setInterval(() => {
+            const nowEffective = Date.now() + this.serverOffsetMs;
+            const diff = Math.round((targetTimestamp - nowEffective) / 1000);
+            this.remainingSeconds = Math.max(0, diff);
+
+            // Xử lý âm thanh trong 30 giây cuối
+            if (this.remainingSeconds <= 30 && this.remainingSeconds > 0) {
+              if (this.lastBeepSecond !== this.remainingSeconds) {
+                this.playTickingSound(this.remainingSeconds);
+                this.lastBeepSecond = this.remainingSeconds;
+              }
+            }
+
+            if (this.remainingSeconds <= 0) {
+              clearInterval(this.timerInterval);
+              this.handleTimeout();
+            }
+          }, 1000);
+        },
+
+        syncTimerFromStorage() {
+          const cached = localStorage.getItem('giatruong_active_session');
+          if (!cached) return;
+          try {
+            const sess = JSON.parse(cached);
+            const nowEffective = Date.now() + this.serverOffsetMs;
+            const diff = Math.round((sess.expiresAt - nowEffective) / 1000);
+            this.remainingSeconds = Math.max(0, diff);
+            if (this.remainingSeconds <= 0) {
+              this.handleTimeout();
+            }
+          } catch(e) {}
+        },
+
+        recoverSessionIfActive() {
+          const cached = localStorage.getItem('giatruong_active_session');
+          if (!cached) return;
+          try {
+            const sess = JSON.parse(cached);
+            const nowEffective = Date.now() + this.serverOffsetMs;
+            if (sess.expiresAt > nowEffective) {
+              this.sessionId = sess.sessionId;
+              this.isTrialSession = sess.isTrial;
+              this.totalSeconds = sess.totalSeconds;
+              this.expiresAtMs = sess.expiresAt;
+              this.remainingSeconds = Math.max(0, Math.round((sess.expiresAt - nowEffective) / 1000));
+              this.voterName = sess.voterName || this.voterName;
+              this.voterPhone = sess.voterPhone || this.voterPhone;
+
+              // Khôi phục mảng ứng viên chọn dở
+              const savedDraftPicks = localStorage.getItem(`giatruong_draft_picks_${this.sessionId}`) || localStorage.getItem('giatruong_draft_picks');
+              if (savedDraftPicks) {
+                this.slots = JSON.parse(savedDraftPicks);
+              }
+
+              this.stage = 2;
+              this.startTimer(sess.expiresAt);
+            } else {
+              localStorage.removeItem('giatruong_active_session');
+              if (sess.sessionId) {
+                localStorage.removeItem(`giatruong_draft_picks_${sess.sessionId}`);
+              }
+            }
+          } catch(e) {}
+        },
+
+        saveDraftPicks() {
+          if (this.sessionId) {
+            localStorage.setItem(`giatruong_draft_picks_${this.sessionId}`, JSON.stringify(this.slots));
+          }
+          localStorage.setItem('giatruong_draft_picks', JSON.stringify(this.slots));
+        },
+
+        getFiltered(query) {
+          const pickedIds = this.slots.filter(s => s.selected && s.selected.id).map(s => s.selected.id);
+          const available = this.candidates.filter(c => !pickedIds.includes(c.id));
+          const q = (query || '').trim();
+          if (!q) return available;
+
+          const preparedData = available.map(c => ({
+            ...c,
+            normalizedName: removeVietnameseTones(c.name)
+          }));
+
+          const fuse = new Fuse(preparedData, {
+            keys: ['name', 'normalizedName'],
+            threshold: 0.35
+          });
+
+          return fuse.search(q + ' ' + removeVietnameseTones(q)).map(r => r.item);
+        },
+
+        exactExists(name) {
+          const q = removeVietnameseTones(name);
+          return this.candidates.some(c => removeVietnameseTones(c.name) === q);
+        },
+
+        syncDraftToServer() {
+          if (!this.sessionId) return;
+          clearTimeout(this.draftDebounceTimer);
+          this.draftDebounceTimer = setTimeout(() => {
+            const candidateIds = this.slots
+              .filter(s => s.selected !== null)
+              .map(s => (s.selected.id ? s.selected.id : s.selected.name));
+
+            fetch('/giatruong/api/draft-pick', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                session_id: this.sessionId,
+                candidate_ids: candidateIds
+              })
+            }).catch(() => {});
+          }, 400);
+        },
+
+        selectCandidate(idx, item) {
+          this.slots[idx].selected = item;
+          this.slots[idx].search = '';
+          this.activeDropdown = null;
+          this.saveDraftPicks();
+          this.syncDraftToServer();
+        },
+
+        addNewCandidate(idx, rawName) {
+          this.slots[idx].selected = { id: null, name: rawName.trim(), isNew: true, is_incumbent: false };
+          this.slots[idx].search = '';
+          this.activeDropdown = null;
+          this.saveDraftPicks();
+          this.syncDraftToServer();
+        },
+
+        clearSlot(idx) {
+          this.slots[idx].selected = null;
+          this.slots[idx].search = '';
+          this.saveDraftPicks();
+          this.syncDraftToServer();
+        },
+
+        handleTimeout() {
+          if (this.selectedCount === 8) {
+            // Tự động nộp nếu đã chọn đủ 8 người
+            this.submitVote(true);
+          } else {
+            // Khóa và báo hết giờ nếu chưa hoàn thành
+            this.clearSessionStorage();
+            this.submitSuccess = false;
+            this.errorMessage = `Đã hết thời gian! Bạn mới chọn được ${this.selectedCount}/8 vị trí nên phiếu chưa hợp lệ.`;
+            this.stage = 3;
+          }
+        },
+
+        clearSessionStorage() {
+          localStorage.removeItem('giatruong_active_session');
+          if (this.sessionId) {
+            localStorage.removeItem(`giatruong_draft_picks_${this.sessionId}`);
+          }
+          localStorage.removeItem('giatruong_draft_picks');
+        },
+
+        async submitVote(isAutoSubmit = false) {
+          if (this.loading) return;
+          this.loading = true;
+          this.errorMessage = '';
+
+          const payload = this.slots.map(s => {
+            if (s.selected && s.selected.isNew) {
+              return { name: s.selected.name, isNew: true };
+            }
+            return { id: s.selected ? s.selected.id : null };
+          });
+
+          try {
+            const res = await fetch('/giatruong/api/submit-vote', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                session_id: this.sessionId,
+                selected_candidates: payload
+              })
+            });
+            const data = await res.json();
+            
+            if (this.timerInterval) clearInterval(this.timerInterval);
+            this.clearSessionStorage();
+
+            if (data.success) {
+              this.submitSuccess = true;
+              this.stage = 3;
+            } else {
+              this.submitSuccess = false;
+              this.errorMessage = data.message;
+              this.stage = 3;
+            }
+          } catch(e) {
+            this.errorMessage = 'Lỗi gửi phiếu lên hệ thống. Vui lòng kiểm tra kết nối mạng.';
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        resetToStart() {
+          this.stage = 1;
+          this.slots = Array.from({ length: 8 }, () => ({ selected: null, search: '' }));
+          this.errorMessage = '';
+          this.loadConfig();
+        }
+      };
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Ban Tổ Chức - Quản Trị Bầu Cử Gia Trưởng</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 antialiased min-h-screen">
+  <div class="max-w-4xl mx-auto p-4 md:p-6 pb-24" x-data="adminApp()" x-init="init()" x-cloak>
+
+    <!-- HEADER -->
+    <header class="bg-indigo-900 text-white p-5 rounded-2xl shadow-lg flex flex-col md:flex-row justify-between items-center gap-4">
+      <div>
+        <h1 class="text-xl md:text-2xl font-bold uppercase tracking-wide">Trung Tâm Điều Hành Bầu Cử</h1>
+        <p class="text-xs text-indigo-200 mt-1">Cộng Đoàn Gia Trưởng Giáo Xứ • Ban Tổ Chức</p>
+      </div>
+      <div class="flex items-center space-x-3">
+        <a href="/giatruong/" target="_blank" class="text-xs bg-indigo-700/80 hover:bg-indigo-600 text-white font-semibold px-3 py-2 rounded-xl transition flex items-center space-x-1">
+          <span>Xem Cổng Cử Tri</span>
+          <span>↗</span>
+        </a>
+        <button type="button" @click="logout()" x-show="isAuthed" class="text-xs bg-rose-600/80 hover:bg-rose-600 text-white font-semibold px-3 py-2 rounded-xl transition">
+          Đăng xuất
+        </button>
+      </div>
+    </header>
+
+    <!-- MÀN HÌNH ĐĂNG NHẬP ADMIN NẾU CHƯA XÁC THỰC -->
+    <div x-show="!isAuthed" class="max-w-md mx-auto mt-10 bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+      <div class="text-center">
+        <div class="w-12 h-12 bg-indigo-100 text-indigo-700 rounded-full flex items-center justify-center mx-auto text-xl font-bold">🔒</div>
+        <h2 class="text-base font-bold text-slate-900 mt-3">Xác Thực Ban Tổ Chức</h2>
+        <p class="text-xs text-slate-500 mt-1">Vui lòng nhập mật mã quản trị để truy cập bảng điều khiển.</p>
+      </div>
+
+      <div>
+        <input type="password" x-model="tokenInput" @keyup.enter="login()" placeholder="Nhập mật mã quản trị..." 
+               class="w-full px-4 py-3 border rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500 border-slate-300">
+      </div>
+
+      <div x-show="authError" class="p-3 bg-red-100 text-red-700 text-xs rounded-xl font-medium" x-text="authError"></div>
+
+      <button type="button" @click="login()" :disabled="loading" 
+              class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl shadow transition">
+        <span x-show="!loading">Đăng Nhập Điều Hành</span>
+        <span x-show="loading">Đang xác thực...</span>
+      </button>
+    </div>
+
+    <!-- MÀN HÌNH ĐIỀU HÀNH CHÍNH (KHI ĐÃ ĐĂNG NHẬP) -->
+    <div x-show="isAuthed" class="space-y-6 mt-6">
+
+      <!-- KHỐI 1: BỘ ĐIỀU KHIỂN 1 NÚT CHO CỬ TRI -->
+      <section class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+        <div class="flex justify-between items-center border-b pb-3">
+          <div>
+            <h2 class="text-sm font-bold text-slate-900 uppercase">1. Điều Khiển Trạng Thái Cổng Bầu Cử</h2>
+            <p class="text-xs text-slate-500 mt-0.5">Quyết định giao diện hiển thị 1 nút duy nhất trên điện thoại toàn bộ cử tri.</p>
+          </div>
+          <span class="text-xs font-bold px-3 py-1 rounded-full uppercase"
+                :class="{
+                  'bg-amber-100 text-amber-800': config.voting_status === 'trial_only',
+                  'bg-emerald-100 text-emerald-800': config.voting_status === 'real_only',
+                  'bg-rose-100 text-rose-800': config.voting_status === 'closed'
+                }"
+                x-text="currentStatusLabel"></span>
+        </div>
+
+        <!-- 3 Nút gạt chuyển trạng thái tức thì -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <!-- Nút Mở Thử Nghiệm -->
+          <button type="button" @click="setStatus('trial_only')" :disabled="loading"
+                  :class="config.voting_status === 'trial_only' ? 'ring-4 ring-amber-400 bg-amber-500 text-white' : 'bg-slate-100 text-slate-700 hover:bg-amber-50 hover:text-amber-800'"
+                  class="p-4 rounded-xl font-bold text-xs uppercase transition flex flex-col items-center justify-center text-center space-y-1 shadow-sm">
+            <span class="text-base">🧪</span>
+            <span>MỞ BẦU THỬ NGHIỆM</span>
+            <span class="text-[10px] font-normal lowercase opacity-80">(Thời lượng: <span x-text="config.trial_duration_minutes"></span> phút)</span>
+          </button>
+
+          <!-- Nút Mở Bầu Thật -->
+          <button type="button" @click="setStatus('real_only')" :disabled="loading"
+                  :class="config.voting_status === 'real_only' ? 'ring-4 ring-emerald-400 bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-emerald-50 hover:text-emerald-800'"
+                  class="p-4 rounded-xl font-bold text-xs uppercase transition flex flex-col items-center justify-center text-center space-y-1 shadow-sm">
+            <span class="text-base">🗳️</span>
+            <span>MỞ BẦU CHÍNH THỨC</span>
+            <span class="text-[10px] font-normal lowercase opacity-80">(Thời lượng: <span x-text="config.real_duration_minutes"></span> phút)</span>
+          </button>
+
+          <!-- Nút Đóng Cổng -->
+          <button type="button" @click="setStatus('closed')" :disabled="loading"
+                  :class="config.voting_status === 'closed' ? 'ring-4 ring-rose-400 bg-rose-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-rose-50 hover:text-rose-800'"
+                  class="p-4 rounded-xl font-bold text-xs uppercase transition flex flex-col items-center justify-center text-center space-y-1 shadow-sm">
+            <span class="text-base">⛔</span>
+            <span>ĐÓNG CỔNG BÌNH CHỌN</span>
+            <span class="text-[10px] font-normal lowercase opacity-80">(Khóa tất cả thao tác)</span>
+          </button>
+        </div>
+
+        <!-- Cài đặt thời lượng -->
+        <div class="pt-3 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+          <div class="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl">
+            <span class="font-medium text-slate-700">Thời gian Bầu Thử (phút):</span>
+            <input type="number" min="1" max="60" x-model.number="config.trial_duration_minutes" @change="updateDurations()" 
+                   class="w-16 px-2 py-1 border rounded text-center font-bold bg-white outline-none focus:ring-1 focus:ring-indigo-500">
+          </div>
+          <div class="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl">
+            <span class="font-medium text-slate-700">Thời gian Bầu Thật (phút):</span>
+            <input type="number" min="1" max="60" x-model.number="config.real_duration_minutes" @change="updateDurations()" 
+                   class="w-16 px-2 py-1 border rounded text-center font-bold bg-white outline-none focus:ring-1 focus:ring-indigo-500">
+          </div>
+        </div>
+      </section>
+
+      <!-- KHỐI 2: BẢNG KẾT QUẢ THỜI GIAN THỰC (REAL-TIME LEADERBOARD) -->
+      <section class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 border-b pb-3">
+          <div>
+            <h2 class="text-sm font-bold text-slate-900 uppercase">2. Bảng Xếp Hạng Kết Quả Trực Tuyến</h2>
+            <p class="text-xs text-slate-500 mt-0.5">Tự động làm mới mỗi 3 giây.</p>
+          </div>
+
+          <!-- Tab chuyển đổi giữa Thật và Thử -->
+          <div class="flex items-center space-x-2">
+            <button type="button" @click="activeTab = 'real'" 
+                    :class="activeTab === 'real' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                    class="px-3 py-1.5 rounded-xl text-xs font-bold transition">
+              🗳️ Bầu Chính Thức (<span x-text="results.total_real_votes"></span> phiếu)
+            </button>
+            <button type="button" @click="activeTab = 'trial'" 
+                    :class="activeTab === 'trial' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                    class="px-3 py-1.5 rounded-xl text-xs font-bold transition">
+              🧪 Bầu Thử (<span x-text="results.total_trial_votes"></span> phiếu)
+            </button>
+          </div>
+        </div>
+
+        <!-- Thanh thống kê nhanh -->
+        <div class="p-3 bg-slate-50 rounded-xl flex justify-between items-center text-xs">
+          <span class="text-slate-600">
+            Tổng số cử tri đã nộp phiếu: 
+            <strong class="text-indigo-700 text-sm" x-text="activeTab === 'real' ? results.total_real_votes : results.total_trial_votes"></strong>
+          </span>
+          <div class="flex items-center space-x-2">
+            <button type="button" @click="fetchResults()" class="text-indigo-600 font-semibold hover:underline">🔄 Làm mới</button>
+            <button type="button" x-show="activeTab === 'trial'" @click="resetTrialVotes()" class="text-red-500 font-semibold hover:underline">🗑️ Xóa kết quả thử</button>
+          </div>
+        </div>
+
+        <!-- BẢNG DANH SÁCH ỨNG VIÊN & SỐ PHIẾU -->
+        <div class="space-y-2">
+          <template x-for="(cand, idx) in currentRanking" :key="cand.id">
+            <div class="p-3 rounded-xl border transition flex flex-col space-y-1.5"
+                 :class="idx < 8 ? 'bg-indigo-50/40 border-indigo-200' : 'bg-white border-slate-100'">
+              <div class="flex justify-between items-center text-xs">
+                <div class="flex items-center space-x-2">
+                  <span class="w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-black"
+                        :class="idx < 8 ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-600'" 
+                        x-text="idx + 1"></span>
+                  <span :class="cand.is_incumbent ? 'italic font-normal text-slate-800' : 'font-bold text-slate-900'" x-text="cand.name"></span>
+                  <span x-show="cand.is_incumbent" class="text-[9px] bg-slate-100 text-slate-600 italic font-normal px-1.5 py-0.2 rounded border border-slate-200">Đương nhiệm</span>
+                  <span x-show="idx < 8" class="text-[9px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.2 rounded uppercase">Top 8</span>
+                </div>
+                <div class="font-mono font-bold text-sm text-indigo-900">
+                  <span x-text="cand.vote_count"></span> <span class="text-[10px] text-slate-500 font-sans font-normal">phiếu</span>
+                  <span class="text-[10px] text-slate-400 font-normal ml-1" x-text="'(' + calcPercent(cand.vote_count) + '%)'"></span>
+                </div>
+              </div>
+
+              <!-- Thanh tiến trình tỷ lệ phiếu -->
+              <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                <div class="h-full transition-all duration-500" 
+                     :class="idx < 8 ? 'bg-indigo-600' : 'bg-slate-400'" 
+                     :style="'width: ' + calcPercent(cand.vote_count) + '%'"></div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+      </section>
+
+    </div>
+
+  </div>
+
+  <script>
+    function adminApp() {
+      return {
+        isAuthed: false,
+        tokenInput: 'admin_secret_giatruong_2026',
+        token: '',
+        authError: '',
+        loading: false,
+        activeTab: 'real',
+        config: { voting_status: 'closed', real_duration_minutes: 8, trial_duration_minutes: 4 },
+        results: { total_real_votes: 0, total_trial_votes: 0, real_ranking: [], trial_ranking: [] },
+        pollingTimer: null,
+
+        async init() {
+          const saved = localStorage.getItem('giatruong_admin_token');
+          if (saved) {
+            this.token = saved;
+            this.isAuthed = true;
+            await this.loadConfig();
+            await this.fetchResults();
+            this.startPolling();
+          }
+        },
+
+        get currentStatusLabel() {
+          if (this.config.voting_status === 'trial_only') return 'Đang Bầu Thử';
+          if (this.config.voting_status === 'real_only') return 'Đang Bầu Thật';
+          return 'Đang Khóa Cổng';
+        },
+
+        get currentRanking() {
+          return this.activeTab === 'real' ? (this.results.real_ranking || []) : (this.results.trial_ranking || []);
+        },
+
+        calcPercent(votes) {
+          const total = this.activeTab === 'real' ? this.results.total_real_votes : this.results.total_trial_votes;
+          if (!total || total === 0) return 0;
+          return Math.round((votes / total) * 100);
+        },
+
+        async login() {
+          this.loading = true;
+          this.authError = '';
+          try {
+            const res = await fetch(`/giatruong/api/admin/results?token=${encodeURIComponent(this.tokenInput.trim())}`);
+            const data = await res.json();
+            if (!data.success) {
+              this.authError = data.message || 'Mật mã quản trị không chính xác.';
+              this.loading = false;
+              return;
+            }
+            this.token = this.tokenInput.trim();
+            localStorage.setItem('giatruong_admin_token', this.token);
+            this.isAuthed = true;
+            this.results = data;
+            await this.loadConfig();
+            this.startPolling();
+          } catch(e) {
+            this.authError = 'Không thể kết nối máy chủ.';
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        logout() {
+          localStorage.removeItem('giatruong_admin_token');
+          this.isAuthed = false;
+          this.token = '';
+          if (this.pollingTimer) clearInterval(this.pollingTimer);
+        },
+
+        async loadConfig() {
+          try {
+            const res = await fetch('/giatruong/api/config?v=' + Date.now());
+            const data = await res.json();
+            if (data.success) this.config = data;
+          } catch(e) {}
+        },
+
+        async setStatus(status) {
+          if (this.loading) return;
+          this.loading = true;
+          try {
+            const res = await fetch('/giatruong/api/admin/settings', {
+              method: 'POST',
+              headers: { 
+                'Content-Type': 'application/json',
+                'x-admin-token': this.token
+              },
+              body: JSON.stringify({ voting_status: status })
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.config.voting_status = status;
+
+              // Khi kích hoạt Bầu Chính Thức: Gửi tín hiệu sang n8n kích hoạt chuỗi trực tiếp Zalo
+              if (status === 'real_only') {
+                fetch('https://n8nhome.gaudetedomino.io.vn/webhook/start-live-voting-broadcast', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    action: 'START_LIVE_VOTING',
+                    duration_minutes: this.config.real_duration_minutes || 8,
+                    started_at: new Date().toISOString()
+                  })
+                }).catch(() => {
+                  // Không chặn luồng admin nếu webhook n8n chưa online
+                });
+              }
+            } else {
+              alert(data.message || 'Lỗi cập nhật trạng thái.');
+            }
+          } catch(e) {
+            alert('Lỗi kết nối máy chủ.');
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async updateDurations() {
+          try {
+            await fetch('/giatruong/api/admin/settings', {
+              method: 'POST',
+              headers: { 
+                'Content-Type': 'application/json',
+                'x-admin-token': this.token
+              },
+              body: JSON.stringify({
+                real_duration_minutes: this.config.real_duration_minutes,
+                trial_duration_minutes: this.config.trial_duration_minutes
+              })
+            });
+          } catch(e) {}
+        },
+
+        async fetchResults() {
+          if (!this.isAuthed || !this.token) return;
+          try {
+            const res = await fetch(`/giatruong/api/admin/results?v=${Date.now()}`, {
+              headers: { 'x-admin-token': this.token }
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.results = data;
+            }
+          } catch(e) {}
+        },
+
+        async resetTrialVotes() {
+          if (!confirm('Bạn có chắc chắn muốn đặt lại (xóa toàn bộ) các lượt bình chọn thử không? Kết quả thật sẽ không bị ảnh hưởng.')) return;
+          try {
+            const res = await fetch('/giatruong/api/admin/reset-trial', {
+              method: 'POST',
+              headers: { 'x-admin-token': this.token }
+            });
+            const data = await res.json();
+            if (data.success) {
+              alert('Đã xóa toàn bộ kết quả bầu thử nghiệm.');
+              await this.fetchResults();
+            }
+          } catch(e) {
+            alert('Lỗi kết nối máy chủ.');
+          }
+        },
+
+        startPolling() {
+          if (this.pollingTimer) clearInterval(this.pollingTimer);
+          this.pollingTimer = setInterval(() => {
+            this.fetchResults();
+            this.loadConfig();
+          }, 3000);
+        }
+      };
+    }
+  </script>
+</body>
+</html>
