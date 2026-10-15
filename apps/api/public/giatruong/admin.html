@@ -58,20 +58,78 @@
     <!-- MÀN HÌNH ĐIỀU HÀNH CHÍNH (KHI ĐÃ ĐĂNG NHẬP) -->
     <div x-show="isAuthed" class="space-y-6 mt-6">
 
-      <!-- KHỐI 1: BỘ ĐIỀU KHIỂN 1 NÚT CHO CỬ TRI -->
+      <!-- KHỐI 1: BỘ ĐIỀU KHIỂN & HẸN GIỜ ĐỢT BẦU CỬ -->
       <section class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
         <div class="flex justify-between items-center border-b pb-3">
           <div>
-            <h2 class="text-sm font-bold text-slate-900 uppercase">1. Điều Khiển Trạng Thái Cổng Bầu Cử</h2>
-            <p class="text-xs text-slate-500 mt-0.5">Quyết định giao diện hiển thị 1 nút duy nhất trên điện thoại toàn bộ cử tri.</p>
+            <h2 class="text-sm font-bold text-slate-900 uppercase">1. Điều Khiển Trạng Thái & Đợt Bầu Cử</h2>
+            <p class="text-xs text-slate-500 mt-0.5">Quản lý phiên bầu cử, ấn định thời gian bắt đầu và kiểm soát đồng bộ toàn bộ cử tri.</p>
           </div>
-          <span class="text-xs font-bold px-3 py-1 rounded-full uppercase"
-                :class="{
-                  'bg-amber-100 text-amber-800': config.voting_status === 'trial_only',
-                  'bg-emerald-100 text-emerald-800': config.voting_status === 'real_only',
-                  'bg-rose-100 text-rose-800': config.voting_status === 'closed'
-                }"
-                x-text="currentStatusLabel"></span>
+          <div class="flex items-center space-x-2">
+            <span class="text-xs font-bold px-3 py-1 rounded-full uppercase"
+                  :class="{
+                    'bg-amber-100 text-amber-800': config.voting_status === 'trial_only',
+                    'bg-emerald-100 text-emerald-800': config.voting_status === 'real_only',
+                    'bg-rose-100 text-rose-800': config.voting_status === 'closed'
+                  }"
+                  x-text="currentStatusLabel"></span>
+          </div>
+        </div>
+
+        <!-- THÔNG TIN ĐỢT BẦU HIỆN TẠI (ROUND STATUS CARD) -->
+        <div x-show="config.current_round" class="p-4 rounded-xl border"
+             :class="{
+               'bg-amber-50/70 border-amber-200': config.current_round?.status === 'scheduled',
+               'bg-emerald-50/70 border-emerald-200': config.current_round?.status === 'in_progress',
+               'bg-slate-50 border-slate-200': config.current_round?.status === 'completed' || config.current_round?.status === 'cancelled'
+             }">
+          <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
+            <div>
+              <div class="flex items-center space-x-2">
+                <span class="px-2 py-0.5 rounded text-[10px] font-black uppercase text-white bg-indigo-700" 
+                      x-text="'Đợt ' + (config.current_round?.round_number || 1)"></span>
+                <span class="text-xs font-bold text-slate-800" x-text="config.current_round?.title || 'Bầu Cử Ban Điều Hành'"></span>
+                <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase"
+                      :class="{
+                        'bg-amber-200 text-amber-900': config.current_round?.status === 'scheduled',
+                        'bg-emerald-200 text-emerald-900 animate-pulse': config.current_round?.status === 'in_progress',
+                        'bg-slate-200 text-slate-700': config.current_round?.status === 'completed',
+                        'bg-rose-200 text-rose-900': config.current_round?.status === 'cancelled'
+                      }"
+                      x-text="roundStatusLabel"></span>
+              </div>
+              <p class="text-[11px] text-slate-600 mt-1" x-text="roundStatusDescription"></p>
+            </div>
+
+            <!-- Thao tác nhanh khi đang Scheduled -->
+            <div x-show="config.current_round?.status === 'scheduled'" class="flex flex-wrap items-center gap-1.5">
+              <button type="button" @click="reschedule('delay', 2)" :disabled="loading"
+                      class="px-2.5 py-1.5 bg-amber-200 hover:bg-amber-300 text-amber-900 rounded-lg text-xs font-bold transition">
+                ⏱️ +2 phút
+              </button>
+              <button type="button" @click="reschedule('delay', 5)" :disabled="loading"
+                      class="px-2.5 py-1.5 bg-amber-200 hover:bg-amber-300 text-amber-900 rounded-lg text-xs font-bold transition">
+                ⏱️ +5 phút
+              </button>
+              <button type="button" @click="reschedule('start_now')" :disabled="loading"
+                      class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow transition">
+                🚀 Bắt Đầu Ngay
+              </button>
+              <button type="button" @click="reschedule('cancel')" :disabled="loading"
+                      class="px-2.5 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-lg text-xs font-bold transition">
+                ❌ Hủy Hẹn Giờ
+              </button>
+            </div>
+
+            <!-- Nút Khởi Động Đợt Mới khi đợt trước đã hoàn tất -->
+            <div x-show="config.current_round?.status === 'completed' || config.current_round?.status === 'cancelled'">
+              <button type="button" @click="openNewRoundModal()" :disabled="loading"
+                      class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow transition flex items-center space-x-1">
+                <span>➕</span>
+                <span>Khởi Động Đợt Mới</span>
+              </button>
+            </div>
+          </div>
         </div>
 
         <!-- 3 Nút gạt chuyển trạng thái tức thì -->
@@ -87,11 +145,11 @@
 
           <!-- Nút Mở Bầu Thật -->
           <button type="button" @click="setStatus('real_only')" :disabled="loading"
-                  :class="config.voting_status === 'real_only' ? 'ring-4 ring-emerald-400 bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-emerald-50 hover:text-emerald-800'"
+                  :class="config.voting_status === 'real_only' && config.current_round?.status === 'in_progress' ? 'ring-4 ring-emerald-400 bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700 hover:bg-emerald-50 hover:text-emerald-800'"
                   class="p-4 rounded-xl font-bold text-xs uppercase transition flex flex-col items-center justify-center text-center space-y-1 shadow-sm">
             <span class="text-base">🗳️</span>
-            <span>MỞ BẦU CHÍNH THỨC</span>
-            <span class="text-[10px] font-normal lowercase opacity-80">(Thời lượng: <span x-text="config.real_duration_minutes"></span> phút)</span>
+            <span>MỞ BẦU CHÍNH THỨC NGAY</span>
+            <span class="text-[10px] font-normal lowercase opacity-80">(8 phút tính từ lúc bấm)</span>
           </button>
 
           <!-- Nút Đóng Cổng -->
@@ -104,18 +162,61 @@
           </button>
         </div>
 
-        <!-- Cài đặt thời lượng -->
-        <div class="pt-3 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-          <div class="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl">
-            <span class="font-medium text-slate-700">Thời gian Bầu Thử (phút):</span>
-            <input type="number" min="1" max="60" x-model.number="config.trial_duration_minutes" @change="updateDurations()" 
-                   class="w-16 px-2 py-1 border rounded text-center font-bold bg-white outline-none focus:ring-1 focus:ring-indigo-500">
+        <!-- BỘ HẸN GIỜ ẤN ĐỊNH BẮT ĐẦU (SCHEDULE CONTROLS) -->
+        <div class="p-4 bg-indigo-50/50 rounded-xl border border-indigo-100 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+              <span class="text-indigo-700 font-bold text-xs">⏰ Ấn Định Giờ Bắt Đầu Bầu Chính Thức:</span>
+              <span class="text-[10px] text-slate-500">(Cử tri vào trước sẽ ở Phòng Chờ đếm ngược đến giờ G)</span>
+            </div>
           </div>
-          <div class="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl">
-            <span class="font-medium text-slate-700">Thời gian Bầu Thật (phút):</span>
-            <input type="number" min="1" max="60" x-model.number="config.real_duration_minutes" @change="updateDurations()" 
-                   class="w-16 px-2 py-1 border rounded text-center font-bold bg-white outline-none focus:ring-1 focus:ring-indigo-500">
+
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" @click="scheduleRound(2)" :disabled="loading"
+                    class="px-3 py-2 bg-white hover:bg-indigo-100 text-indigo-800 font-bold text-xs rounded-xl border border-indigo-200 transition">
+              Sau 2 phút
+            </button>
+            <button type="button" @click="scheduleRound(5)" :disabled="loading"
+                    class="px-3 py-2 bg-white hover:bg-indigo-100 text-indigo-800 font-bold text-xs rounded-xl border border-indigo-200 transition">
+              Sau 5 phút
+            </button>
+            <button type="button" @click="scheduleRound(10)" :disabled="loading"
+                    class="px-3 py-2 bg-white hover:bg-indigo-100 text-indigo-800 font-bold text-xs rounded-xl border border-indigo-200 transition">
+              Sau 10 phút
+            </button>
+            <div class="flex items-center space-x-1.5 ml-auto">
+              <input type="time" x-model="scheduleTimeInput" 
+                     class="px-2 py-1.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold outline-none focus:ring-1 focus:ring-indigo-500">
+              <button type="button" @click="scheduleRoundAtSpecificTime()" :disabled="loading || !scheduleTimeInput"
+                      class="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition shadow-sm disabled:opacity-50">
+                Lên Lịch
+              </button>
+            </div>
           </div>
+        </div>
+
+        <!-- Cài đặt thời lượng & Nút Khởi động Đợt Mới -->
+        <div class="pt-3 border-t border-slate-100 flex flex-col md:flex-row justify-between items-center gap-3 text-xs">
+          <div class="flex items-center space-x-3 w-full md:w-auto">
+            <div class="flex items-center space-x-2 bg-slate-50 p-2 rounded-xl">
+              <span class="font-medium text-slate-700">Thời gian Bầu Thử:</span>
+              <input type="number" min="1" max="60" x-model.number="config.trial_duration_minutes" @change="updateDurations()" 
+                     class="w-12 px-1 py-0.5 border rounded text-center font-bold bg-white">
+              <span class="text-slate-500">phút</span>
+            </div>
+            <div class="flex items-center space-x-2 bg-slate-50 p-2 rounded-xl">
+              <span class="font-medium text-slate-700">Thời gian Bầu Thật:</span>
+              <input type="number" min="1" max="60" x-model.number="config.real_duration_minutes" @change="updateDurations()" 
+                     class="w-12 px-1 py-0.5 border rounded text-center font-bold bg-white">
+              <span class="text-slate-500">phút</span>
+            </div>
+          </div>
+
+          <button type="button" @click="openNewRoundModal()" :disabled="loading"
+                  class="w-full md:w-auto px-4 py-2.5 bg-purple-700 hover:bg-purple-800 text-white font-bold rounded-xl shadow transition flex items-center justify-center space-x-1.5">
+            <span>🔄</span>
+            <span>Khởi Động Đợt Mới (Reset Phiếu Về 0)</span>
+          </button>
         </div>
       </section>
 
@@ -186,9 +287,193 @@
 
       </section>
 
-    </div>
+      <!-- KHỐI 3: LỊCH SỬ CÁC ĐỢT BẦU CỬ (ELECTION ROUNDS HISTORY) -->
+      <section class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+        <div class="flex justify-between items-center border-b pb-3">
+          <div>
+            <h2 class="text-sm font-bold text-slate-900 uppercase">3. Lịch Sử Các Đợt Bầu Cử</h2>
+            <p class="text-xs text-slate-500 mt-0.5">Lưu trữ kết quả đầy đủ của từng đợt để đối chiếu, kiểm toán và lập biên bản.</p>
+          </div>
+          <button type="button" @click="fetchRounds()" class="text-xs text-indigo-600 font-bold hover:underline flex items-center space-x-1">
+            <span>🔄</span>
+            <span>Tải Lại Lịch Sử</span>
+          </button>
+        </div>
 
-  </div>
+        <!-- Bảng danh sách các đợt -->
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs text-slate-600">
+            <thead class="bg-slate-50 text-slate-700 uppercase font-bold text-[10px] border-b">
+              <tr>
+                <th class="py-2.5 px-3">Đợt</th>
+                <th class="py-2.5 px-3">Tiêu Đề / Ghi Chú</th>
+                <th class="py-2.5 px-3">Trạng Thái</th>
+                <th class="py-2.5 px-3">Thời Gian Bắt Đầu</th>
+                <th class="py-2.5 px-3">Thời Gian Kết Thúc</th>
+                <th class="py-2.5 px-3 text-center">Tổng Phiếu</th>
+                <th class="py-2.5 px-3 text-right">Chi Tiết</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              <template x-for="r in roundsList" :key="r.id">
+                <tr class="hover:bg-slate-50/60 transition">
+                  <td class="py-3 px-3 font-bold text-indigo-900">
+                    <span class="px-2 py-0.5 bg-indigo-100 text-indigo-800 rounded font-black" x-text="'Đợt ' + r.round_number"></span>
+                  </td>
+                  <td class="py-3 px-3 font-medium text-slate-800">
+                    <div x-text="r.title"></div>
+                    <div x-show="r.notes" class="text-[10px] text-slate-400 italic" x-text="r.notes"></div>
+                  </td>
+                  <td class="py-3 px-3">
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+                          :class="{
+                            'bg-amber-100 text-amber-800': r.status === 'scheduled',
+                            'bg-emerald-100 text-emerald-800': r.status === 'in_progress',
+                            'bg-slate-100 text-slate-700': r.status === 'completed',
+                            'bg-rose-100 text-rose-800': r.status === 'cancelled'
+                          }"
+                          x-text="r.status === 'scheduled' ? 'Đã hẹn giờ' : (r.status === 'in_progress' ? 'Đang diễn ra' : (r.status === 'completed' ? 'Đã hoàn tất' : 'Đã hủy'))"></span>
+                  </td>
+                  <td class="py-3 px-3 text-[11px] font-mono text-slate-500" x-text="formatDate(r.started_at || r.scheduled_start_at)"></td>
+                  <td class="py-3 px-3 text-[11px] font-mono text-slate-500" x-text="formatDate(r.expires_at)"></td>
+                  <td class="py-3 px-3 text-center font-bold text-indigo-700 text-sm font-mono" x-text="r.total_votes"></td>
+                  <td class="py-3 px-3 text-right">
+                    <button type="button" @click="viewRoundDetail(r.id)" 
+                            class="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg border border-indigo-200 transition">
+                      Xem Điểm
+                    </button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="roundsList.length === 0">
+                <td colspan="7" class="py-4 text-center text-slate-400">Chưa có lịch sử đợt bầu cử nào.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- MODAL: KHỞI ĐỘNG ĐỢT BẦU CỬ MỚI -->
+      <div x-show="showNewRoundModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" x-cloak>
+        <div class="bg-white w-full max-w-md rounded-2xl p-6 shadow-2xl space-y-4 border border-slate-200 animate-in fade-in">
+          <div class="flex justify-between items-center border-b pb-3">
+            <h3 class="text-base font-bold text-slate-900 flex items-center space-x-1.5">
+              <span>🔄</span>
+              <span>Khởi Động Đợt Bầu Cử Mới</span>
+            </h3>
+            <button type="button" @click="showNewRoundModal = false" class="text-slate-400 hover:text-slate-600 font-bold text-lg">✕</button>
+          </div>
+
+          <div class="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 space-y-1">
+            <p class="font-bold">⚠️ Lưu ý quan trọng:</p>
+            <p>1. Toàn bộ số phiếu bầu sẽ được <strong>reset về 0</strong> cho đợt mới.</p>
+            <p>2. Đợt cũ sẽ được lưu lại nguyên vẹn trong mục <strong>Lịch Sử</strong> để kiểm tra.</p>
+            <p>3. Cử tri đã bỏ phiếu ở đợt trước sẽ được quyền bỏ phiếu trong đợt mới này.</p>
+          </div>
+
+          <div class="space-y-3 text-xs">
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">Tiêu đề đợt bầu cử:</label>
+              <input type="text" x-model="newRoundForm.title" placeholder="VD: Bầu Cử Ban Điều Hành - Đợt 2" 
+                     class="w-full px-3 py-2 border rounded-xl text-xs font-semibold border-slate-300 outline-none focus:ring-1 focus:ring-indigo-500">
+            </div>
+
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">Thời lượng (phút):</label>
+              <input type="number" min="1" max="60" x-model.number="newRoundForm.duration_minutes" 
+                     class="w-full px-3 py-2 border rounded-xl text-xs font-semibold border-slate-300 outline-none focus:ring-1 focus:ring-indigo-500">
+            </div>
+
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">Hẹn giờ bắt đầu (Tùy chọn):</label>
+              <div class="grid grid-cols-3 gap-2">
+                <button type="button" @click="newRoundForm.delay_minutes = 0" 
+                        :class="newRoundForm.delay_minutes === 0 ? 'bg-indigo-600 text-white font-bold' : 'bg-slate-100 text-slate-700 font-medium'"
+                        class="py-2 rounded-xl text-xs transition">Bắt đầu ngay</button>
+                <button type="button" @click="newRoundForm.delay_minutes = 3" 
+                        :class="newRoundForm.delay_minutes === 3 ? 'bg-indigo-600 text-white font-bold' : 'bg-slate-100 text-slate-700 font-medium'"
+                        class="py-2 rounded-xl text-xs transition">Sau 3 phút</button>
+                <button type="button" @click="newRoundForm.delay_minutes = 5" 
+                        :class="newRoundForm.delay_minutes === 5 ? 'bg-indigo-600 text-white font-bold' : 'bg-slate-100 text-slate-700 font-medium'"
+                        class="py-2 rounded-xl text-xs transition">Sau 5 phút</button>
+              </div>
+            </div>
+
+            <div>
+              <label class="block font-bold text-slate-700 mb-1">Ghi chú (Tùy chọn):</label>
+              <textarea x-model="newRoundForm.notes" rows="2" placeholder="Ghi chú lý do mở đợt mới..." 
+                        class="w-full px-3 py-2 border rounded-xl text-xs border-slate-300 outline-none focus:ring-1 focus:ring-indigo-500"></textarea>
+            </div>
+          </div>
+
+          <div class="pt-3 border-t flex justify-end space-x-2">
+            <button type="button" @click="showNewRoundModal = false" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition">
+              Đóng
+            </button>
+            <button type="button" @click="submitNewRound()" :disabled="loading" 
+                    class="px-5 py-2 bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs rounded-xl shadow transition disabled:opacity-50">
+              <span x-show="!loading">Xác Nhận Tạo Đợt Mới</span>
+              <span x-show="loading">Đang khởi tạo...</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- MODAL: XEM KẾT QUẢ CHI TIẾT CỦA MỘT ĐỢT -->
+      <div x-show="showRoundDetailModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" x-cloak>
+        <div class="bg-white w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col rounded-2xl shadow-2xl border border-slate-200 animate-in fade-in">
+          <div class="p-4 bg-indigo-900 text-white flex justify-between items-center">
+            <div>
+              <div class="flex items-center space-x-2">
+                <span class="px-2 py-0.5 rounded text-[10px] font-black uppercase text-white bg-indigo-700" 
+                      x-text="'Đợt ' + (selectedRoundDetail?.round?.round_number || '')"></span>
+                <h3 class="text-sm font-bold" x-text="selectedRoundDetail?.round?.title"></h3>
+              </div>
+              <p class="text-[11px] text-indigo-200 mt-0.5">
+                Tổng phiếu: <strong class="text-white text-xs font-mono" x-text="selectedRoundDetail?.total_votes"></strong> phiếu • 
+                Bắt đầu: <span x-text="formatDate(selectedRoundDetail?.round?.started_at || selectedRoundDetail?.round?.scheduled_start_at)"></span>
+              </p>
+            </div>
+            <button type="button" @click="showRoundDetailModal = false" class="text-white/80 hover:text-white font-bold text-lg">✕</button>
+          </div>
+
+          <div class="p-5 overflow-y-auto space-y-2 flex-1">
+            <template x-for="(cand, idx) in (selectedRoundDetail?.ranking || [])" :key="cand.id">
+              <div class="p-3 rounded-xl border flex flex-col space-y-1.5"
+                   :class="idx < 8 ? 'bg-indigo-50/50 border-indigo-200' : 'bg-white border-slate-100'">
+                <div class="flex justify-between items-center text-xs">
+                  <div class="flex items-center space-x-2">
+                    <span class="w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-black"
+                          :class="idx < 8 ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-600'" 
+                          x-text="idx + 1"></span>
+                    <span :class="cand.is_incumbent ? 'italic font-normal text-slate-800' : 'font-bold text-slate-900'" x-text="cand.name"></span>
+                    <span x-show="cand.is_incumbent" class="text-[9px] bg-slate-100 text-slate-600 italic font-normal px-1.5 py-0.2 rounded border border-slate-200">Đương nhiệm</span>
+                    <span x-show="idx < 8" class="text-[9px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.2 rounded uppercase">Top 8</span>
+                  </div>
+                  <div class="font-mono font-bold text-sm text-indigo-900">
+                    <span x-text="cand.vote_count"></span> <span class="text-[10px] text-slate-500 font-sans font-normal">phiếu</span>
+                    <span class="text-[10px] text-slate-400 font-normal ml-1" 
+                          x-text="'(' + (selectedRoundDetail?.total_votes ? Math.round((cand.vote_count / selectedRoundDetail.total_votes) * 100) : 0) + '%)'"></span>
+                  </div>
+                </div>
+
+                <div class="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                  <div class="h-full" 
+                       :class="idx < 8 ? 'bg-indigo-600' : 'bg-slate-400'" 
+                       :style="'width: ' + (selectedRoundDetail?.total_votes ? Math.round((cand.vote_count / selectedRoundDetail.total_votes) * 100) : 0) + '%'"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <div class="p-3 bg-slate-50 border-t flex justify-end">
+            <button type="button" @click="showRoundDetailModal = false" 
+                    class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs rounded-xl transition">
+              Đóng
+            </button>
+          </div>
+        </div>
+      </div>
 
   <script>
     function adminApp() {
@@ -199,9 +484,17 @@
         authError: '',
         loading: false,
         activeTab: 'real',
-        config: { voting_status: 'closed', real_duration_minutes: 8, trial_duration_minutes: 4 },
+        config: { voting_status: 'closed', real_duration_minutes: 8, trial_duration_minutes: 4, current_round: null },
         results: { total_real_votes: 0, total_trial_votes: 0, real_ranking: [], trial_ranking: [] },
         pollingTimer: null,
+
+        // Round & Schedule Management
+        scheduleTimeInput: '',
+        showNewRoundModal: false,
+        newRoundForm: { title: '', delay_minutes: 0, duration_minutes: 8, notes: '' },
+        roundsList: [],
+        showRoundDetailModal: false,
+        selectedRoundDetail: null,
 
         async init() {
           const saved = localStorage.getItem('giatruong_admin_token');
@@ -210,6 +503,7 @@
             this.isAuthed = true;
             await this.loadConfig();
             await this.fetchResults();
+            await this.fetchRounds();
             this.startPolling();
           }
         },
@@ -224,10 +518,61 @@
           return this.activeTab === 'real' ? (this.results.real_ranking || []) : (this.results.trial_ranking || []);
         },
 
+        get roundStatusLabel() {
+          const s = this.config.current_round?.status;
+          if (s === 'scheduled') return 'Đã Hẹn Giờ';
+          if (s === 'in_progress') return 'Đang Bầu Trực Tiếp';
+          if (s === 'completed') return 'Đã Hoàn Tất';
+          if (s === 'cancelled') return 'Đã Hủy';
+          return 'Chưa Khởi Động';
+        },
+
+        get roundStatusDescription() {
+          const cr = this.config.current_round;
+          if (!cr) return 'Chưa có thông tin đợt bầu cử.';
+          if (cr.status === 'scheduled') {
+            const timeStr = cr.scheduled_start_at ? new Date(cr.scheduled_start_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+            const rem = cr.remaining_seconds_to_start || 0;
+            const m = Math.floor(rem / 60);
+            const s = rem % 60;
+            return `Dự kiến bắt đầu lúc ${timeStr} (còn ${m}p ${s < 10 ? '0' : ''}${s}s). Cử tri đang ở Phòng Chờ.`;
+          }
+          if (cr.status === 'in_progress') {
+            const rem = cr.remaining_seconds_to_end || 0;
+            const m = Math.floor(rem / 60);
+            const s = rem % 60;
+            return `Đang trong khung giờ 8 phút tập trung! Còn lại: ${m}p ${s < 10 ? '0' : ''}${s}s • Tổng phiếu đợt này: ${cr.total_votes || 0}`;
+          }
+          if (cr.status === 'completed') {
+            return `Đợt bầu cử đã chốt sổ thành công với tổng cộng ${cr.total_votes || 0} phiếu bầu hợp lệ.`;
+          }
+          if (cr.status === 'cancelled') {
+            return 'Đợt bầu cử đã bị hủy hoặc hoãn lại.';
+          }
+          return '';
+        },
+
         calcPercent(votes) {
           const total = this.activeTab === 'real' ? this.results.total_real_votes : this.results.total_trial_votes;
           if (!total || total === 0) return 0;
           return Math.round((votes / total) * 100);
+        },
+
+        formatDate(isoStr) {
+          if (!isoStr) return '--';
+          try {
+            const d = new Date(isoStr);
+            return d.toLocaleTimeString('vi-VN', {
+              timeZone: 'Asia/Ho_Chi_Minh',
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit'
+            }) + ' ' + d.toLocaleDateString('vi-VN', {
+              timeZone: 'Asia/Ho_Chi_Minh',
+              day: '2-digit',
+              month: '2-digit'
+            });
+          } catch(e) { return isoStr; }
         },
 
         async login() {
@@ -246,6 +591,7 @@
             this.isAuthed = true;
             this.results = data;
             await this.loadConfig();
+            await this.fetchRounds();
             this.startPolling();
           } catch(e) {
             this.authError = 'Không thể kết nối máy chủ.';
@@ -284,6 +630,8 @@
             const data = await res.json();
             if (data.success) {
               this.config.voting_status = status;
+              await this.loadConfig();
+              await this.fetchRounds();
 
               // Khi kích hoạt Bầu Chính Thức: Gửi tín hiệu sang n8n kích hoạt chuỗi trực tiếp Zalo
               if (status === 'real_only') {
@@ -295,9 +643,7 @@
                     duration_minutes: this.config.real_duration_minutes || 8,
                     started_at: new Date().toISOString()
                   })
-                }).catch(() => {
-                  // Không chặn luồng admin nếu webhook n8n chưa online
-                });
+                }).catch(() => {});
               }
             } else {
               alert(data.message || 'Lỗi cập nhật trạng thái.');
@@ -306,6 +652,159 @@
             alert('Lỗi kết nối máy chủ.');
           } finally {
             this.loading = false;
+          }
+        },
+
+        async scheduleRound(minutes) {
+          if (this.loading) return;
+          this.loading = true;
+          try {
+            const res = await fetch('/giatruong/api/admin/schedule-round', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-admin-token': this.token
+              },
+              body: JSON.stringify({ delay_minutes: minutes })
+            });
+            const data = await res.json();
+            if (data.success) {
+              await this.loadConfig();
+              await this.fetchRounds();
+            } else {
+              alert(data.message || 'Lỗi lên lịch.');
+            }
+          } catch(e) {
+            alert('Lỗi kết nối máy chủ.');
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async scheduleRoundAtSpecificTime() {
+          if (!this.scheduleTimeInput || this.loading) return;
+          const [hours, minutes] = this.scheduleTimeInput.split(':').map(Number);
+          const target = new Date();
+          target.setHours(hours, minutes, 0, 0);
+          if (target.getTime() <= Date.now()) {
+            target.setDate(target.getDate() + 1);
+          }
+          this.loading = true;
+          try {
+            const res = await fetch('/giatruong/api/admin/schedule-round', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-admin-token': this.token
+              },
+              body: JSON.stringify({ scheduled_start_at: target.toISOString() })
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.scheduleTimeInput = '';
+              await this.loadConfig();
+              await this.fetchRounds();
+            } else {
+              alert(data.message || 'Lỗi lên lịch.');
+            }
+          } catch(e) {
+            alert('Lỗi kết nối máy chủ.');
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async reschedule(action, add_minutes = 0) {
+          if (this.loading) return;
+          this.loading = true;
+          try {
+            const res = await fetch('/giatruong/api/admin/reschedule-round', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-admin-token': this.token
+              },
+              body: JSON.stringify({ action, add_minutes })
+            });
+            const data = await res.json();
+            if (data.success) {
+              await this.loadConfig();
+              await this.fetchRounds();
+            } else {
+              alert(data.message || 'Lỗi thao tác.');
+            }
+          } catch(e) {
+            alert('Lỗi kết nối máy chủ.');
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        openNewRoundModal() {
+          const nextNum = (this.config.current_round?.round_number || 1) + 1;
+          this.newRoundForm = {
+            title: `Bầu Cử Ban Điều Hành - Đợt ${nextNum}`,
+            delay_minutes: 0,
+            duration_minutes: this.config.real_duration_minutes || 8,
+            notes: ''
+          };
+          this.showNewRoundModal = true;
+        },
+
+        async submitNewRound() {
+          if (this.loading) return;
+          this.loading = true;
+          try {
+            const res = await fetch('/giatruong/api/admin/new-round', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-admin-token': this.token
+              },
+              body: JSON.stringify(this.newRoundForm)
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.showNewRoundModal = false;
+              await this.loadConfig();
+              await this.fetchResults();
+              await this.fetchRounds();
+              alert(`Đã khởi tạo thành công Đợt ${data.round.round_number}! Số phiếu đã được đặt lại về 0.`);
+            } else {
+              alert(data.message || 'Lỗi khởi tạo đợt mới.');
+            }
+          } catch(e) {
+            alert('Lỗi kết nối máy chủ.');
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async fetchRounds() {
+          if (!this.isAuthed || !this.token) return;
+          try {
+            const res = await fetch(`/giatruong/api/admin/rounds?v=${Date.now()}`, {
+              headers: { 'x-admin-token': this.token }
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.roundsList = data.rounds;
+            }
+          } catch(e) {}
+        },
+
+        async viewRoundDetail(roundId) {
+          try {
+            const res = await fetch(`/giatruong/api/admin/rounds/${roundId}/results?v=${Date.now()}`, {
+              headers: { 'x-admin-token': this.token }
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.selectedRoundDetail = data;
+              this.showRoundDetailModal = true;
+            }
+          } catch(e) {
+            alert('Không thể tải chi tiết đợt bầu.');
           }
         },
 
@@ -360,6 +859,7 @@
           this.pollingTimer = setInterval(() => {
             this.fetchResults();
             this.loadConfig();
+            this.fetchRounds();
           }, 3000);
         }
       };

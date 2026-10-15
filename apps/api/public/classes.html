@@ -159,10 +159,48 @@
       flex-direction: column;
       gap: 12px;
     }
+    .controls-top-bar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
     .search-input-wrapper {
       position: relative;
       display: flex;
       align-items: center;
+      flex: 1;
+      min-width: 260px;
+    }
+    .btn-copy-all {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      background: linear-gradient(135deg, #0284c7, #0066cc);
+      color: #ffffff;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-size: 13.5px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(2, 132, 199, 0.25);
+      transition: all 0.2s ease;
+      white-space: nowrap;
+    }
+    .btn-copy-all:hover {
+      background: linear-gradient(135deg, #0369a1, #0052a3);
+      box-shadow: 0 4px 10px rgba(2, 132, 199, 0.35);
+      transform: translateY(-1px);
+    }
+    .btn-copy-all:active {
+      transform: translateY(0);
+    }
+    @media (max-width: 600px) {
+      .btn-copy-all {
+        width: 100%;
+      }
     }
     .search-input {
       width: 100%;
@@ -231,17 +269,21 @@
     .class-card-top {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+      gap: 8px;
+      flex-wrap: wrap;
     }
     .class-code-tag {
       background: #0284c7;
       color: #fff;
       font-weight: 800;
-      font-size: 14px;
-      padding: 4px 10px;
+      font-size: 13.5px;
+      padding: 5px 12px;
       border-radius: 8px;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.3px;
+      line-height: 1.3;
+      display: inline-block;
     }
     .class-status-badge {
       font-size: 12px;
@@ -518,15 +560,20 @@
 
     <!-- Controls: Search & Category Filter -->
     <div class="controls-card">
-      <div class="search-input-wrapper">
-        <span class="search-icon">🔍</span>
-        <input 
-          type="text" 
-          id="searchInput" 
-          class="search-input" 
-          placeholder="Tìm theo tên lớp, mã lớp hoặc tên GLV..." 
-          autocomplete="off"
-        >
+      <div class="controls-top-bar">
+        <div class="search-input-wrapper">
+          <span class="search-icon">🔍</span>
+          <input 
+            type="text" 
+            id="searchInput" 
+            class="search-input" 
+            placeholder="Tìm theo tên lớp, mã lớp hoặc tên GLV..." 
+            autocomplete="off"
+          >
+        </div>
+        <button id="btnCopyAllLinks" class="btn-copy-all" title="Sao chép toàn bộ danh sách tên và link nộp ảnh của tất cả các lớp">
+          📋 Copy Toàn Bộ Link &amp; Tên Lớp
+        </button>
       </div>
       <div class="filter-pills" id="filterPills">
         <button class="filter-pill active" data-filter="ALL">Tất Cả (29 Lớp)</button>
@@ -574,6 +621,93 @@
     let allClasses = [];
     let activeFilter = 'ALL';
     let searchQuery = '';
+
+    // Ánh xạ tên lớp đầy đủ chính tả không viết tắt theo yêu cầu Giáo Xứ
+    const CLASS_FULL_NAME_MAP = {
+      // Khối Bao Đồng (6 lớp)
+      'BD1A': 'LỚP BAO ĐỒNG 1A',
+      'BD1B': 'LỚP BAO ĐỒNG 1B',
+      'BD1C': 'LỚP BAO ĐỒNG 1C',
+      'BD2A': 'LỚP BAO ĐỒNG 2A',
+      'BD2B': 'LỚP BAO ĐỒNG 2B',
+      'BD3':  'LỚP BAO ĐỒNG 3',
+      'BD3A': 'LỚP BAO ĐỒNG 3',
+
+      // Khối Khai Tâm (3 lớp)
+      'KT1':  'LỚP KHAI TÂM 1',
+      'KT1A': 'LỚP KHAI TÂM 1',
+      'KT2':  'LỚP KHAI TÂM 2',
+      'KT2A': 'LỚP KHAI TÂM 2',
+      'KT3':  'LỚP KHAI TÂM 3',
+      'KT3A': 'LỚP KHAI TÂM 3',
+
+      // Khối Thêm Sức (9 lớp)
+      'TS1A': 'LỚP THÊM SỨC 1A',
+      'TS1B': 'LỚP THÊM SỨC 1B',
+      'TS1C': 'LỚP THÊM SỨC 1C',
+      'TS2A': 'LỚP THÊM SỨC 2A',
+      'TS2B': 'LỚP THÊM SỨC 2B',
+      'TS2C': 'LỚP THÊM SỨC 2C',
+      'TS3A': 'LỚP THÊM SỨC 3A',
+      'TS3B': 'LỚP THÊM SỨC 3B',
+      'TS3C': 'LỚP THÊM SỨC 3C',
+
+      // Khối Vào Đời (2 lớp)
+      'VD1':  'LỚP VÀO ĐỜI 1',
+      'VD1A': 'LỚP VÀO ĐỜI 1',
+      'VD2':  'LỚP VÀO ĐỜI 2',
+      'VD2A': 'LỚP VÀO ĐỜI 2',
+
+      // Khối Xưng Tội / Rước Lễ (7 lớp)
+      'RL1A': 'LỚP XƯNG TỘ 1A',
+      'XT1A': 'LỚP XƯNG TỘ 1A',
+      'RL1B': 'LỚP XƯNG TỘ 1B',
+      'XT1B': 'LỚP XƯNG TỘ 1B',
+      'RL1C': 'LỚP XƯNG TỘI 1C',
+      'XT1C': 'LỚP XƯNG TỘI 1C',
+      'RL2A': 'LỚP XƯNG TỘI 2A',
+      'XT2A': 'LỚP XƯNG TỘI 2A',
+      'RL2B': 'LỚP XƯNG TỘI 2B',
+      'XT2B': 'LỚP XƯNG TỘI 2B',
+      'RL2C': 'LỚP XƯNG TỘI 2C',
+      'XT2C': 'LỚP XƯNG TỘI 2C',
+      'RL3A': 'LỚP XƯNG TỘI 3A',
+      'XT3A': 'LỚP XƯNG TỘI 3A',
+      'RL3B': 'LỚP XƯNG TỘI 3B',
+      'XT3B': 'LỚP XƯNG TỘI 3B',
+      'RL3C': 'LỚP XƯNG TỘI 3C',
+      'XT3C': 'LỚP XƯNG TỘI 3C',
+
+      // Ban Giáo Lý Viên & Các Ban/Giới
+      'GLV0': 'BAN GIÁO LÝ VIÊN',
+      'GLV':  'BAN GIÁO LÝ VIÊN',
+      'LM01': 'ĐỨC MẸ HIỆP CÔNG CỨU CHUỘC',
+      'LM':   'ĐỨC MẸ HIỆP CÔNG CỨU CHUỘC'
+    };
+
+    // Thứ tự hiển thị và sao chép danh sách lớp chuẩn Giáo Xứ
+    const CATECHISM_ORDER = [
+      // Khối Bao Đồng
+      'BD1A', 'BD1B', 'BD1C', 'BD2A', 'BD2B', 'BD3A', 'BD3',
+      // Khối Khai Tâm
+      'KT1A', 'KT1', 'KT2A', 'KT2', 'KT3A', 'KT3',
+      // Khối Thêm Sức
+      'TS1A', 'TS1B', 'TS1C', 'TS2A', 'TS2B', 'TS2C', 'TS3A', 'TS3B', 'TS3C',
+      // Khối Vào Đời
+      'VD1A', 'VD1', 'VD2A', 'VD2',
+      // Khối Xưng Tội / Rước Lễ
+      'RL1A', 'XT1A', 'RL1B', 'XT1B', 'RL1C', 'XT1C',
+      'RL2A', 'XT2A', 'RL2B', 'XT2B', 'RL2C', 'XT2C',
+      'RL3A', 'XT3A', 'RL3B', 'XT3B', 'RL3C', 'XT3C',
+      // Ban Giáo Lý Viên & Ban Giới
+      'GLV0', 'GLV', 'LM01', 'LM'
+    ];
+
+    function getFullClassName(code, fallbackName) {
+      if (!code) return fallbackName || '';
+      const upper = code.trim().toUpperCase();
+      return CLASS_FULL_NAME_MAP[upper] || fallbackName || code;
+    }
 
     // DOM Elements
     const statTotalClasses = document.getElementById('statTotalClasses');
@@ -627,13 +761,14 @@
 
     function openQrModal(cls) {
       const url = getClassRegisterUrl(cls.code);
-      qrModalTitle.textContent = `Mã QR — ${cls.name} (${cls.code})`;
+      const fullName = getFullClassName(cls.code, cls.name);
+      qrModalTitle.textContent = `Mã QR — ${fullName}`;
       qrModalUrl.textContent = url;
       qrModalImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(url)}`;
       btnGoModalLink.href = url;
 
       btnCopyModalLink.onclick = () => {
-        copyToClipboard(url, `Đã sao chép link lớp ${cls.code}!`);
+        copyToClipboard(url, `Đã sao chép link ${fullName}!`);
       };
 
       qrModal.classList.add('active');
@@ -684,24 +819,27 @@
       const q = searchQuery.toLowerCase().trim();
 
       const filtered = allClasses.filter(c => {
+        const fullName = getFullClassName(c.code, c.name);
+
         // Filter by category
         if (activeFilter !== 'ALL') {
           const upperCode = (c.code || '').toUpperCase();
           if (activeFilter === 'GLV' && !upperCode.startsWith('GLV')) return false;
-          if (activeFilter === 'CC' && !upperCode.startsWith('CC')) return false;
-          if (activeFilter === 'AN' && !upperCode.startsWith('AN')) return false;
-          if (activeFilter === 'TN' && !upperCode.startsWith('TN')) return false;
-          if (activeFilter === 'NS' && !upperCode.startsWith('NS')) return false;
+          if (activeFilter === 'CC' && !upperCode.startsWith('CC') && !upperCode.startsWith('KT')) return false;
+          if (activeFilter === 'AN' && !upperCode.startsWith('AN') && !upperCode.startsWith('RL') && !upperCode.startsWith('XT')) return false;
+          if (activeFilter === 'TN' && !upperCode.startsWith('TN') && !upperCode.startsWith('TS')) return false;
+          if (activeFilter === 'NS' && !upperCode.startsWith('NS') && !upperCode.startsWith('BD')) return false;
           if (activeFilter === 'KT' && !upperCode.startsWith('KT')) return false;
-          if (activeFilter === 'DT' && !upperCode.startsWith('DT') && !upperCode.startsWith('HS')) return false;
+          if (activeFilter === 'DT' && !upperCode.startsWith('DT') && !upperCode.startsWith('HS') && !upperCode.startsWith('VD')) return false;
         }
 
         // Search by query
         if (q) {
           const matchCode = (c.code || '').toLowerCase().includes(q);
           const matchName = (c.name || '').toLowerCase().includes(q);
+          const matchFull = fullName.toLowerCase().includes(q);
           const matchTeacher = (c.teacher_name || '').toLowerCase().includes(q);
-          if (!matchCode && !matchName && !matchTeacher) return false;
+          if (!matchCode && !matchName && !matchFull && !matchTeacher) return false;
         }
 
         return true;
@@ -723,6 +861,7 @@
         const empty = c.empty_count || 0;
         const rate = c.completion_rate ?? (total > 0 ? Math.round((success / total) * 100) : 0);
         const registerUrl = getClassRegisterUrl(c.code);
+        const fullName = getFullClassName(c.code, c.name);
 
         let statusBadge = '';
         if (c.is_locked) {
@@ -737,10 +876,9 @@
           <div class="class-card">
             <div>
               <div class="class-card-top">
-                <span class="class-code-tag">${c.code}</span>
+                <span class="class-code-tag">${fullName}</span>
                 ${statusBadge}
               </div>
-              <h3 class="class-name">${c.name}</h3>
               <p class="class-teacher">👤 Phụ trách: <strong>${c.teacher_name || 'Đang cập nhật'}</strong></p>
 
               <div class="card-progress-wrapper">
@@ -787,7 +925,9 @@
         btn.addEventListener('click', () => {
           const url = btn.getAttribute('data-url');
           const code = btn.getAttribute('data-code');
-          copyToClipboard(url, `Đã chép link đăng ký lớp ${code}!`);
+          const cls = allClasses.find(x => x.code === code);
+          const fullName = cls ? getFullClassName(cls.code, cls.name) : code;
+          copyToClipboard(url, `Đã sao chép link đăng ký lớp ${fullName}!`);
         });
       });
     }
@@ -807,6 +947,33 @@
       activeFilter = btn.getAttribute('data-filter');
       renderClasses();
     });
+
+    // Copy toàn bộ link và tên lớp
+    const btnCopyAllLinks = document.getElementById('btnCopyAllLinks');
+    if (btnCopyAllLinks) {
+      btnCopyAllLinks.addEventListener('click', () => {
+        if (!allClasses || allClasses.length === 0) {
+          showToast('Đang tải danh sách lớp, vui lòng thử lại sau giây lát!');
+          return;
+        }
+
+        const orderWeight = (code) => {
+          const upper = (code || '').toUpperCase().trim();
+          const idx = CATECHISM_ORDER.indexOf(upper);
+          return idx !== -1 ? idx : 999;
+        };
+
+        const sorted = [...allClasses].sort((a, b) => orderWeight(a.code) - orderWeight(b.code));
+
+        const copyText = sorted.map(c => {
+          const fullName = getFullClassName(c.code, c.name);
+          const url = getClassRegisterUrl(c.code);
+          return `${fullName}\t: ${url}`;
+        }).join('\n');
+
+        copyToClipboard(copyText, `Đã sao chép link & tên của toàn bộ ${sorted.length} lớp học!`);
+      });
+    }
 
     // Initial fetch
     fetchClasses();

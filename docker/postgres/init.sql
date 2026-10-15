@@ -259,10 +259,32 @@ SET name = EXCLUDED.name,
 
 
 
+-- 3. Bảng Quản Lý Các Đợt Bầu Cử (Election Rounds)
+CREATE TABLE IF NOT EXISTS giatruong.election_rounds (
+    id SERIAL PRIMARY KEY,
+    round_number INT NOT NULL DEFAULT 1,
+    title VARCHAR(150) NOT NULL,
+    status VARCHAR(30) NOT NULL DEFAULT 'scheduled', -- 'scheduled', 'in_progress', 'completed', 'cancelled'
+    scheduled_start_at TIMESTAMP WITH TIME ZONE,
+    started_at TIMESTAMP WITH TIME ZONE,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    duration_minutes INT NOT NULL DEFAULT 8,
+    total_votes INT NOT NULL DEFAULT 0,
+    ended_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO giatruong.election_rounds (round_number, title, status, duration_minutes)
+VALUES (1, 'Bầu Cử Ban Điều Hành Gia Trưởng - Khóa Mới', 'scheduled', 8)
+ON CONFLICT DO NOTHING;
+
+-- 4. Bảng Phiên Bỏ Phiếu (Voting Sessions)
 CREATE TABLE IF NOT EXISTS giatruong.voting_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    round_id INT REFERENCES giatruong.election_rounds(id),
     voter_name VARCHAR(100) NOT NULL,
-    voter_phone VARCHAR(100) NOT NULL,
+    clean_voter_name VARCHAR(100),
+    voter_phone VARCHAR(100),
     is_trial BOOLEAN NOT NULL DEFAULT FALSE,
     started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -271,20 +293,34 @@ CREATE TABLE IF NOT EXISTS giatruong.voting_sessions (
     CONSTRAINT chk_voting_status CHECK (status IN ('in_progress', 'completed', 'expired'))
 );
 
+CREATE INDEX IF NOT EXISTS idx_giatruong_sessions_round ON giatruong.voting_sessions(round_id, status);
 CREATE INDEX IF NOT EXISTS idx_giatruong_sessions_phone ON giatruong.voting_sessions(voter_phone, is_trial);
 CREATE INDEX IF NOT EXISTS idx_giatruong_sessions_expires ON giatruong.voting_sessions(expires_at);
 
+-- 5. Bảng Phiếu Bầu (Votes)
 CREATE TABLE IF NOT EXISTS giatruong.votes (
     id SERIAL PRIMARY KEY,
+    round_id INT REFERENCES giatruong.election_rounds(id),
     session_id UUID UNIQUE NOT NULL REFERENCES giatruong.voting_sessions(id) ON DELETE CASCADE,
-    voter_phone VARCHAR(100) NOT NULL,
+    clean_voter_name VARCHAR(100),
+    voter_phone VARCHAR(100),
     is_trial BOOLEAN NOT NULL DEFAULT FALSE,
     submitted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_votes_round_phone 
+  ON giatruong.votes (round_id, voter_phone) 
+  WHERE voter_phone IS NOT NULL AND voter_phone != '';
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_votes_round_name 
+  ON giatruong.votes (round_id, clean_voter_name) 
+  WHERE (voter_phone IS NULL OR voter_phone = '') AND clean_voter_name IS NOT NULL AND clean_voter_name != '';
+
+CREATE INDEX IF NOT EXISTS idx_giatruong_votes_round ON giatruong.votes(round_id);
 CREATE INDEX IF NOT EXISTS idx_giatruong_votes_phone ON giatruong.votes(voter_phone, is_trial);
 CREATE INDEX IF NOT EXISTS idx_giatruong_votes_trial ON giatruong.votes(is_trial);
 
+-- 6. Bảng Chi Tiết Phiếu Bầu (Vote Details)
 CREATE TABLE IF NOT EXISTS giatruong.vote_details (
     id SERIAL PRIMARY KEY,
     vote_id INT NOT NULL REFERENCES giatruong.votes(id) ON DELETE CASCADE,
@@ -295,4 +331,5 @@ CREATE TABLE IF NOT EXISTS giatruong.vote_details (
 
 CREATE INDEX IF NOT EXISTS idx_giatruong_vote_details_cand ON giatruong.vote_details(candidate_id);
 CREATE INDEX IF NOT EXISTS idx_giatruong_vote_details_vote ON giatruong.vote_details(vote_id);
+
 

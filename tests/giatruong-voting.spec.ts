@@ -195,7 +195,7 @@ describe('Hệ Thống Bỏ Phiếu Ban Đại Diện Gia Trưởng (End-to-End 
     });
     assert.equal(startRes.status, 200);
     const startData = await startRes.json();
-    assert.equal(startData.duration_seconds, 480); // 8 phút
+    assert.ok(startData.duration_seconds <= 480 && startData.duration_seconds > 0);
     realSessionId = startData.session_id;
 
     // Nộp phiếu thật
@@ -217,7 +217,7 @@ describe('Hệ Thống Bỏ Phiếu Ban Đại Diện Gia Trưởng (End-to-End 
     });
     assert.equal(secondStartRes.status, 409);
     const secondData = await secondStartRes.json();
-    assert.match(secondData.message, /đã hoàn thành lượt bầu chính thức/);
+    assert.match(secondData.message, /đã hoàn thành lượt bầu/);
   });
 
   it('10. Kiểm tra kết quả Real-time Leaderboard & Reset Bầu Thử', async () => {
@@ -372,5 +372,177 @@ describe('Hệ Thống Bỏ Phiếu Ban Đại Diện Gia Trưởng (End-to-End 
     assert.equal(liveData.success, true);
     assert.ok(liveData.top_estimated.length <= 10);
     assert.ok(typeof liveData.total_submitted_votes === 'number');
+  });
+
+  it('17. Admin ấn định giờ bắt đầu: Chặn cử tri vào bầu và giữ ở phòng chờ', async () => {
+    // Admin lên lịch hẹn sau 3 phút
+    const schedRes = await fetch(`${BASE_URL}/giatruong/api/admin/schedule-round`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': ADMIN_TOKEN },
+      body: JSON.stringify({ delay_minutes: 3, notes: 'Hẹn giờ test 17' }),
+    });
+    assert.equal(schedRes.status, 200);
+    const schedData = await schedRes.json();
+    assert.equal(schedData.success, true);
+    assert.equal(schedData.round.status, 'scheduled');
+
+    // GET /config hiển thị round status = scheduled và còn thời gian đếm ngược
+    const configRes = await fetch(`${BASE_URL}/giatruong/api/config`);
+    const cfg = await configRes.json();
+    assert.equal(cfg.success, true);
+    assert.equal(cfg.voting_status, 'real_only');
+    assert.equal(cfg.current_round.status, 'scheduled');
+    assert.ok(cfg.current_round.remaining_seconds_to_start > 0);
+
+    // Cử tri cố gắng start session trước giờ G bị từ chối 403
+    const startRes = await fetch(`${BASE_URL}/giatruong/api/session/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voter_phone: '0933112233', is_trial: false }),
+    });
+    assert.equal(startRes.status, 403);
+    const startData = await startRes.json();
+    assert.equal(startData.success, false);
+    assert.match(startData.message, /chưa bắt đầu|phòng chờ/);
+  });
+
+  it('18. Admin Reschedule: Hoãn giờ (+2 phút) và Kích hoạt ngay (start_now)', async () => {
+    // Hoãn thêm 2 phút
+    const delayRes = await fetch(`${BASE_URL}/giatruong/api/admin/reschedule-round`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': ADMIN_TOKEN },
+      body: JSON.stringify({ action: 'delay', add_minutes: 2 }),
+    });
+    assert.equal(delayRes.status, 200);
+
+    // Kích hoạt ngay lập tức
+    const startNowRes = await fetch(`${BASE_URL}/giatruong/api/admin/reschedule-round`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': ADMIN_TOKEN },
+      body: JSON.stringify({ action: 'start_now' }),
+    });
+    assert.equal(startNowRes.status, 200);
+    const startNowData = await startNowRes.json();
+    assert.equal(startNowData.success, true);
+    assert.equal(startNowData.round.status, 'in_progress');
+
+    // Kiểm tra config đã chuyển sang in_progress
+    const cfg = await (await fetch(`${BASE_URL}/giatruong/api/config`)).json();
+    assert.equal(cfg.current_round.status, 'in_progress');
+    assert.ok(cfg.current_round.remaining_seconds_to_end > 0);
+  });
+
+  it('19. Synchronized Window: Cử tri vào trễ nhận đúng thời gian còn lại của đợt bầu', async () => {
+    const lateVoterPhone = '0922445566';
+    const res = await fetch(`${BASE_URL}/giatruong/api/session/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voter_name: 'Cử Tri Vào Trễ', voter_phone: lateVoterPhone, is_trial: false }),
+    });
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.success, true);
+    // duration_seconds phải bằng remaining_seconds của round hiện tại (<= 480)
+    assert.ok(data.duration_seconds <= 480);
+    assert.ok(data.duration_seconds > 0);
+
+    // Nộp phiếu cử tri vào trễ
+    const picks = candidates.slice(0, 8).map((c) => ({ id: c.id }));
+    const submitRes = await fetch(`${BASE_URL}/giatruong/api/submit-vote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: data.session_id, selected_candidates: picks }),
+    });
+    assert.equal(submitRes.status, 200);
+  });
+
+  it('20. Khởi Động Đợt Mới (New Round): Reset phiếu về 0 & Cử tri đợt 1 được bầu lại ở đợt 2', async () => {
+    // Lấy số phiếu đợt hiện tại (ít nhất có 1 phiếu từ test 19)
+    const prevRes = await (await fetch(`${BASE_URL}/giatruong/api/admin/results?token=${ADMIN_TOKEN}`)).json();
+    assert.ok(prevRes.total_real_votes >= 1);
+
+    // Admin tạo Đợt Bầu Cử Mới
+    const newRoundRes = await fetch(`${BASE_URL}/giatruong/api/admin/new-round`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': ADMIN_TOKEN },
+      body: JSON.stringify({
+        title: 'Bầu Cử Ban Điều Hành - Đợt Mới Test 20',
+        duration_minutes: 8,
+        delay_minutes: 0, // Bắt đầu ngay
+        notes: 'Reset phiếu về 0 để kiểm tra đợt mới',
+      }),
+    });
+    assert.equal(newRoundRes.status, 200);
+    const newRoundData = await newRoundRes.json();
+    assert.equal(newRoundData.success, true);
+    assert.ok(newRoundData.round.round_number >= 2);
+    assert.equal(newRoundData.round.status, 'in_progress');
+
+    // Sau khi mở Đợt mới, kết quả real_votes phải RESET VỀ 0
+    const resetRes = await (await fetch(`${BASE_URL}/giatruong/api/admin/results?token=${ADMIN_TOKEN}`)).json();
+    assert.equal(resetRes.total_real_votes, 0);
+
+    // Cử tri đợt 1 (0922445566 từ test 19) ĐƯỢC PHÉP tham gia bầu ở Đợt 2!
+    const reVoteStart = await fetch(`${BASE_URL}/giatruong/api/session/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voter_phone: '0922445566', is_trial: false }),
+    });
+    assert.equal(reVoteStart.status, 200);
+    const reVoteData = await reVoteStart.json();
+    assert.equal(reVoteData.success, true);
+    assert.ok(reVoteData.session_id);
+
+    // Nộp phiếu thành công ở Đợt 2
+    const picks = candidates.slice(0, 8).map((c) => ({ id: c.id }));
+    const submitReVote = await fetch(`${BASE_URL}/giatruong/api/submit-vote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: reVoteData.session_id, selected_candidates: picks }),
+    });
+    assert.equal(submitReVote.status, 200);
+
+    // Kết quả Đợt 2 giờ là 1 phiếu
+    const afterReVote = await (await fetch(`${BASE_URL}/giatruong/api/admin/results?token=${ADMIN_TOKEN}`)).json();
+    assert.equal(afterReVote.total_real_votes, 1);
+  });
+
+  it('21. Per-Round Idempotency: Trong cùng Đợt 2, cử tri không được nộp lần 2 (1 người 1 phiếu)', async () => {
+    // Cố gắng tạo session lần nữa bằng cùng SĐT trong Đợt 2
+    const dupRes = await fetch(`${BASE_URL}/giatruong/api/session/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voter_phone: '0922445566', is_trial: false }),
+    });
+    assert.equal(dupRes.status, 409);
+    const dupData = await dupRes.json();
+    assert.equal(dupData.success, false);
+    assert.match(dupData.message, /đã hoàn thành lượt bầu|1 người 1 phiếu/);
+  });
+
+  it('22. Election Rounds History: Tra cứu toàn bộ các đợt và xem bảng điểm đợt cũ', async () => {
+    // Lấy danh sách rounds
+    const roundsRes = await fetch(`${BASE_URL}/giatruong/api/admin/rounds`, {
+      headers: { 'x-admin-token': ADMIN_TOKEN },
+    });
+    assert.equal(roundsRes.status, 200);
+    const roundsData = await roundsRes.json();
+    assert.equal(roundsData.success, true);
+    assert.ok(Array.isArray(roundsData.rounds));
+    assert.ok(roundsData.rounds.length >= 2);
+
+    // Lấy kết quả chi tiết của đợt 1
+    const round1 = roundsData.rounds.find((r: any) => r.round_number === 1);
+    assert.ok(round1);
+
+    const r1ResultRes = await fetch(`${BASE_URL}/giatruong/api/admin/rounds/${round1.id}/results`, {
+      headers: { 'x-admin-token': ADMIN_TOKEN },
+    });
+    assert.equal(r1ResultRes.status, 200);
+    const r1Result = await r1ResultRes.json();
+    assert.equal(r1Result.success, true);
+    assert.equal(r1Result.round.round_number, 1);
+    assert.ok(typeof r1Result.total_votes === 'number');
+    assert.ok(Array.isArray(r1Result.ranking));
   });
 });

@@ -48,11 +48,64 @@ export function computeIdentityKey(voter_name?: string, voter_phone?: string): {
   };
 }
 
+export async function getCurrentElectionRound(pool: Pool): Promise<{
+  id: number;
+  round_number: number;
+  title: string;
+  status: 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
+  scheduled_start_at: string | null;
+  started_at: string | null;
+  expires_at: string | null;
+  duration_minutes: number;
+  total_votes: number;
+} | null> {
+  const settingRes = await pool.query("SELECT value FROM giatruong.settings WHERE key = 'current_round_id'");
+  const roundId = settingRes.rows[0]?.value ? parseInt(settingRes.rows[0].value, 10) : null;
+
+  let roundRes;
+  if (roundId) {
+    roundRes = await pool.query('SELECT * FROM giatruong.election_rounds WHERE id = $1', [roundId]);
+  }
+  if (!roundRes || roundRes.rows.length === 0) {
+    roundRes = await pool.query('SELECT * FROM giatruong.election_rounds ORDER BY id DESC LIMIT 1');
+  }
+
+  if (roundRes.rows.length === 0) return null;
+  const round = roundRes.rows[0];
+
+  const now = new Date();
+  // Tự động kích hoạt sang 'in_progress' nếu là 'scheduled' và đã đến giờ G
+  if (round.status === 'scheduled' && round.scheduled_start_at && new Date(round.scheduled_start_at) <= now) {
+    const durationMin = round.duration_minutes || 8;
+    const expiresAt = new Date(new Date(round.scheduled_start_at).getTime() + durationMin * 60 * 1000);
+    await pool.query(
+      "UPDATE giatruong.election_rounds SET status = 'in_progress', started_at = COALESCE(started_at, $1), expires_at = $2 WHERE id = $3",
+      [round.scheduled_start_at, expiresAt, round.id]
+    );
+    round.status = 'in_progress';
+    round.started_at = round.scheduled_start_at;
+    round.expires_at = expiresAt;
+  }
+
+  // Tự động chốt 'completed' nếu đã qua expires_at
+  if (round.status === 'in_progress' && round.expires_at && new Date(round.expires_at) < now) {
+    await pool.query(
+      "UPDATE giatruong.election_rounds SET status = 'completed' WHERE id = $1",
+      [round.id]
+    );
+    round.status = 'completed';
+  }
+
+  return round;
+}
+
 export async function computeLiveStatus(
   pool: Pool,
   redis: Redis | undefined,
-  limit: number = 10
+  limit: number = 10,
+  targetRoundId?: number | null
 ): Promise<{
+  roundId: number | null;
   activeDraftingCount: number;
   totalSubmittedVotes: number;
   customDraftCount: number;
@@ -65,6 +118,9 @@ export async function computeLiveStatus(
     total_estimated: number;
   }>;
 }> {
+  const currentRound = targetRoundId ? null : await getCurrentElectionRound(pool);
+  const roundId = targetRoundId || currentRound?.id || 1;
+
   const now = Date.now();
   const tenMinutesAgo = now - 10 * 60 * 1000;
 
@@ -72,15 +128,18 @@ export async function computeLiveStatus(
   const draftTallyMap: Record<number, number> = {};
   let customDraftCount = 0;
 
+  const redisActiveKey = `giatruong:round:${roundId}:active_sessions`;
+  const redisDraftPrefix = `giatruong:round:${roundId}:draft:`;
+
   if (redis) {
-    // Dọn dẹp session cũ quá 10 phút và đếm O(1)
-    await redis.zremrangebyscore('giatruong:active_sessions', 0, tenMinutesAgo);
-    activeDraftingCount = await redis.zcard('giatruong:active_sessions');
+    // Dọn dẹp session cũ quá 10 phút và đếm O(1) theo round
+    await redis.zremrangebyscore(redisActiveKey, 0, tenMinutesAgo);
+    activeDraftingCount = await redis.zcard(redisActiveKey);
 
     // Lấy danh sách session ID còn hoạt động
-    const activeIds = await redis.zrange('giatruong:active_sessions', 0, -1);
+    const activeIds = await redis.zrange(redisActiveKey, 0, -1);
     if (activeIds.length > 0) {
-      const keys = activeIds.map((id: string) => `giatruong:draft:${id}`);
+      const keys = activeIds.map((id: string) => `${redisDraftPrefix}${id}`);
       const draftResults = await redis.mget(...keys);
 
       for (const rawDraft of draftResults) {
@@ -104,21 +163,22 @@ export async function computeLiveStatus(
     }
   }
 
-  // Lấy tổng số phiếu Bầu Thật đã hoàn tất
+  // Lấy tổng số phiếu Bầu Thật đã hoàn tất trong round này
   const submittedRes = await pool.query(
-    'SELECT COUNT(*) as total_submitted FROM giatruong.votes WHERE is_trial = FALSE'
+    'SELECT COUNT(*) as total_submitted FROM giatruong.votes WHERE round_id = $1 AND is_trial = FALSE',
+    [roundId]
   );
   const totalSubmittedVotes = parseInt(submittedRes.rows[0]?.total_submitted || '0', 10);
 
-  // Thống kê phiếu bầu thật đã nộp chính thức cho từng ứng viên
+  // Thống kê phiếu bầu thật đã nộp chính thức cho từng ứng viên trong round này
   const officialTallyRes = await pool.query(`
     SELECT c.id, c.name, c.is_incumbent, COUNT(vd.id) as official_votes
     FROM giatruong.candidates c
     LEFT JOIN giatruong.vote_details vd ON c.id = vd.candidate_id
-    LEFT JOIN giatruong.votes v ON vd.vote_id = v.id AND v.is_trial = FALSE
+    LEFT JOIN giatruong.votes v ON vd.vote_id = v.id AND v.is_trial = FALSE AND v.round_id = $1
     WHERE c.is_active = TRUE
     GROUP BY c.id, c.name, c.is_incumbent
-  `);
+  `, [roundId]);
 
   // Kết hợp Phiếu Chính Thức + Phiếu Nháp đang chọn
   const combinedCandidates = officialTallyRes.rows.map((r) => {
@@ -151,6 +211,7 @@ export async function computeLiveStatus(
   const topEstimated = combinedCandidates.slice(0, limit);
 
   return {
+    roundId,
     activeDraftingCount,
     totalSubmittedVotes,
     customDraftCount,
@@ -166,28 +227,25 @@ export async function triggerLiveBroadcastIfEligible(
   if (!redis) return { triggered: false, reason: 'no_redis' };
 
   try {
-    // 1. Chỉ phát khi đang ở chế độ Bầu Thật (real_only)
     const statusRes = await pool.query("SELECT value FROM giatruong.settings WHERE key = 'voting_status'");
     if (statusRes.rows[0]?.value !== 'real_only') {
       return { triggered: false, reason: 'not_real_only' };
     }
 
-    // 2. Tính số phiếu bầu thật hiện tại
-    const countRes = await pool.query('SELECT COUNT(*) as cnt FROM giatruong.votes WHERE is_trial = FALSE');
+    const currentRound = await getCurrentElectionRound(pool);
+    const roundId = currentRound?.id || 1;
+
+    const countRes = await pool.query('SELECT COUNT(*) as cnt FROM giatruong.votes WHERE round_id = $1 AND is_trial = FALSE', [roundId]);
     const totalSubmitted = parseInt(countRes.rows[0]?.cnt || '0', 10);
     if (totalSubmitted <= 0) return { triggered: false, reason: 'zero_votes' };
 
-    // 3. Kiểm tra mốc & thời gian phát sóng trong Redis
-    const state = await redis.hgetall('giatruong:broadcast_state');
+    const state = await redis.hgetall(`giatruong:round:${roundId}:broadcast_state`);
     const lastTs = parseInt(state.last_ts || '0', 10);
     const lastCount = parseInt(state.last_count || '0', 10);
     const now = Date.now();
     const votesSinceLast = totalSubmitted - lastCount;
     const timeSinceLast = now - lastTs;
 
-    // Khoảng 40 cử tri -> gom ~10 mốc:
-    // - Mốc phiếu: Cứ tăng thêm 4 phiếu (4, 8, 12, 16, 20, 24, 28, 32, 36, 40)
-    // - Hoặc giãn cách tối thiểu 45s nếu có ít nhất 1 phiếu mới
     const isMilestone = totalSubmitted % 4 === 0 || votesSinceLast >= 4;
     const isTimeThrottle = timeSinceLast >= 45000 && votesSinceLast >= 1;
 
@@ -195,17 +253,14 @@ export async function triggerLiveBroadcastIfEligible(
       return { triggered: false, reason: 'throttled', votesSinceLast, timeSinceLast };
     }
 
-    // Cập nhật state vào Redis
-    await redis.hset('giatruong:broadcast_state', {
+    await redis.hset(`giatruong:round:${roundId}:broadcast_state`, {
       last_ts: String(now),
       last_count: String(totalSubmitted),
     });
 
-    // 4. Lấy Top 10 ứng viên dẫn đầu
-    const liveData = await computeLiveStatus(pool, redis, 10);
+    const liveData = await computeLiveStatus(pool, redis, 10, roundId);
     const milestone = `${liveData.totalSubmittedVotes}/40 phiếu`;
 
-    // 5. Định dạng bản tin Zalo trực tiếp gửi vào nhóm Ban Điều Hành
     const timeStr = new Date().toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const topText = liveData.topEstimated
       .map((c, i) => `${i + 1}. ${c.name}: ${c.total_estimated} phiếu (Chính thức: ${c.official_votes})`)
@@ -215,7 +270,8 @@ export async function triggerLiveBroadcastIfEligible(
       ? `\n🔒 (Ghi nhận có ${liveData.customDraftCount} lượt chọn ẩn danh cho các nhân tố mới ngoài danh sách)`
       : '';
 
-    const zaloMessage = `📊 [TRỰC TIẾP BẦU CỬ GIA TRƯỞNG] - Cập nhật tiến độ (${milestone})
+    const roundTitle = currentRound ? ` [ĐỢT ${currentRound.round_number}]` : '';
+    const zaloMessage = `📊 [TRỰC TIẾP BẦU CỬ GIA TRƯỞNG${roundTitle}] - Cập nhật tiến độ (${milestone})
 ⏰ Thời gian: ${timeStr}
 🗳️ Đã nộp: ${liveData.totalSubmittedVotes}/40 cử tri
 👥 Đang thao tác nháp: ${liveData.activeDraftingCount} cử tri
@@ -228,7 +284,6 @@ ${topText}${customText}
     const targetThreadId = process.env.ZALO_GIATRUONG_GROUP_ID || '8686690356639968363';
     const zaloBroadcastUrl = process.env.N8N_ZALO_BROADCAST_URL || 'https://n8nhome.gaudetedomino.io.vn/webhook/broadcast-zalo?token=LongDen1982';
 
-    // Gọi trực tiếp webhook n8n Zalo Sender (Non-blocking)
     fetch(zaloBroadcastUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -254,7 +309,7 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
   const redis = (fastify as any).redis as Redis | undefined;
 
   // =========================================================================
-  // 1. GET /config: Lấy cấu hình trạng thái 1 nút & thời gian đếm ngược
+  // 1. GET /config: Lấy cấu hình trạng thái, thông tin Round & đếm ngược
   // =========================================================================
   fastify.get('/config', async (_request, reply) => {
     try {
@@ -264,6 +319,23 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
         cfg[r.key] = r.value;
       });
 
+      const currentRound = await getCurrentElectionRound(pool);
+      const now = Date.now();
+
+      let remainingSecondsToStart = 0;
+      let remainingSecondsToEnd = 0;
+
+      if (currentRound) {
+        if (currentRound.scheduled_start_at) {
+          const startMs = new Date(currentRound.scheduled_start_at).getTime();
+          remainingSecondsToStart = Math.max(0, Math.round((startMs - now) / 1000));
+        }
+        if (currentRound.expires_at) {
+          const expiresMs = new Date(currentRound.expires_at).getTime();
+          remainingSecondsToEnd = Math.max(0, Math.round((expiresMs - now) / 1000));
+        }
+      }
+
       return reply.send({
         success: true,
         voting_status: cfg.voting_status || 'closed', // 'trial_only' | 'real_only' | 'closed'
@@ -271,6 +343,18 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
         trial_duration_minutes: parseInt(cfg.trial_duration_minutes || '4', 10),
         max_picks: parseInt(cfg.max_picks || '8', 10),
         server_time: new Date().toISOString(),
+        current_round: currentRound ? {
+          id: currentRound.id,
+          round_number: currentRound.round_number,
+          title: currentRound.title,
+          status: currentRound.status,
+          scheduled_start_at: currentRound.scheduled_start_at,
+          started_at: currentRound.started_at,
+          expires_at: currentRound.expires_at,
+          duration_minutes: currentRound.duration_minutes,
+          remaining_seconds_to_start: remainingSecondsToStart,
+          remaining_seconds_to_end: remainingSecondsToEnd,
+        } : null,
       });
     } catch (err: any) {
       fastify.log.error(err, '[GIATRUONG /config ERROR]');
@@ -297,7 +381,7 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // =========================================================================
-  // 3. POST /session/start: Bắt đầu phiên bỏ phiếu (Unified Identity Key)
+  // 3. POST /session/start: Bắt đầu phiên bỏ phiếu (Unified Identity & Per-Round)
   // =========================================================================
   fastify.post<{
     Body: {
@@ -335,36 +419,61 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ success: false, message: 'Hệ thống đang mở phiên BẦU CỬ CHÍNH THỨC, không thể bầu thử.' });
       }
 
-      // 2. Nếu là Bầu Thật: Kiểm tra xem định danh này đã có phiếu bầu thành công chưa
-      if (!is_trial) {
-        const phoneParam = identity.cleanPhone || '';
-        const nameParam = identity.cleanName ? `name:${identity.cleanName}` : '';
+      const now = new Date();
+      let currentRound = await getCurrentElectionRound(pool);
 
-        const existingVote = await pool.query(
-          `SELECT id, submitted_at FROM giatruong.votes
-           WHERE is_trial = FALSE AND (
-             ($1 <> '' AND voter_phone = $1) OR
-             ($2 <> '' AND voter_phone = $2)
-           )`,
-          [phoneParam, nameParam]
-        );
-        if (existingVote.rows.length > 0) {
-          return reply.status(409).send({
+      // 2. Nếu là Bầu Thật: Kiểm tra Round, Scheduled Window & Per-round idempotency
+      if (!is_trial) {
+        if (!currentRound) {
+          return reply.status(400).send({ success: false, message: 'Chưa có đợt bầu cử chính thức nào được kích hoạt.' });
+        }
+
+        if (currentRound.status === 'cancelled') {
+          return reply.status(403).send({ success: false, message: 'Đợt bầu cử này đã bị tạm hoãn bởi Ban Tổ Chức.' });
+        }
+
+        // Nếu đang ở trạng thái hẹn giờ và chưa tới giờ G
+        if (currentRound.status === 'scheduled' && currentRound.scheduled_start_at && new Date(currentRound.scheduled_start_at) > now) {
+          const timeStr = new Date(currentRound.scheduled_start_at).toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          return reply.status(403).send({
             success: false,
-            message: 'Thông tin cử tri này đã hoàn thành lượt bầu chính thức và không thể tham gia thêm (1 người 1 phiếu).',
+            message: `Cổng bầu cử chính thức chưa mở. Dự kiến mở lúc ${timeStr}. Vui lòng chờ trong phòng chờ.`,
           });
         }
 
-        // Kiểm tra xem có phiên thật nào đang dở dang (chưa hết giờ) không
+        // Kiểm tra xem round đã hết giờ chưa
+        if (currentRound.expires_at && new Date(currentRound.expires_at) <= now) {
+          return reply.status(400).send({ success: false, message: 'Đợt bầu cử này đã kết thúc thời gian bỏ phiếu.' });
+        }
+
+        // Per-round idempotency (Task 2.4): Kiểm tra trong phạm vi current_round.id
+        const existingVote = await pool.query(`
+          SELECT id FROM giatruong.votes 
+          WHERE round_id = $1 AND is_trial = FALSE
+            AND (
+              ($2 != '' AND voter_phone IS NOT NULL AND voter_phone = $2)
+              OR 
+              ($3 != '' AND clean_voter_name IS NOT NULL AND clean_voter_name = $3)
+            )
+        `, [currentRound.id, identity.cleanPhone, identity.cleanName]);
+
+        if (existingVote.rows.length > 0) {
+          return reply.status(409).send({
+            success: false,
+            message: `Cử tri này đã hoàn thành lượt bầu của Đợt ${currentRound.round_number} (1 người 1 phiếu).`,
+          });
+        }
+
+        // Kiểm tra xem có phiên thật dở dang trong round này không
         const activeSess = await pool.query(
           `SELECT id, expires_at, EXTRACT(EPOCH FROM (expires_at - NOW()))::int as remaining_seconds
            FROM giatruong.voting_sessions
-           WHERE is_trial = FALSE AND status = 'in_progress' AND expires_at > NOW() AND (
-             ($1 <> '' AND voter_phone = $1) OR
-             ($2 <> '' AND voter_phone = $2)
+           WHERE round_id = $1 AND is_trial = FALSE AND status = 'in_progress' AND expires_at > NOW() AND (
+             ($2 <> '' AND voter_phone = $2) OR
+             ($3 <> '' AND clean_voter_name = $3)
            )
            ORDER BY started_at DESC LIMIT 1`,
-          [phoneParam, nameParam]
+          [currentRound.id, identity.cleanPhone, identity.cleanName]
         );
         if (activeSess.rows.length > 0) {
           const sess = activeSess.rows[0];
@@ -380,19 +489,38 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // 3. Tính toán thời lượng phiên
-      const durationMin = is_trial
-        ? parseInt(cfg.trial_duration_minutes || '4', 10)
-        : parseInt(cfg.real_duration_minutes || '8', 10);
-      const durationSeconds = durationMin * 60;
-      const now = new Date();
-      const expiresAt = new Date(now.getTime() + durationSeconds * 1000);
+      let expiresAt: Date;
+      let durationSeconds: number;
+
+      if (!is_trial && currentRound && currentRound.expires_at) {
+        // Đồng bộ toàn cục theo giờ kết thúc của Round (Late-joiner tính chuẩn thời gian còn lại)
+        expiresAt = new Date(currentRound.expires_at);
+        durationSeconds = Math.max(0, Math.round((expiresAt.getTime() - now.getTime()) / 1000));
+        if (durationSeconds <= 0) {
+          return reply.status(400).send({ success: false, message: 'Đợt bầu cử này đã kết thúc thời gian bỏ phiếu.' });
+        }
+      } else {
+        const durationMin = is_trial
+          ? parseInt(cfg.trial_duration_minutes || '4', 10)
+          : parseInt(cfg.real_duration_minutes || '8', 10);
+        durationSeconds = durationMin * 60;
+        expiresAt = new Date(now.getTime() + durationSeconds * 1000);
+      }
 
       // 4. Tạo phiên mới trong Database
       const sessionRes = await pool.query(
-        `INSERT INTO giatruong.voting_sessions (voter_name, voter_phone, is_trial, started_at, expires_at, status)
-         VALUES ($1, $2, $3, $4, $5, 'in_progress')
+        `INSERT INTO giatruong.voting_sessions (round_id, voter_name, clean_voter_name, voter_phone, is_trial, started_at, expires_at, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'in_progress')
          RETURNING id`,
-        [identity.voterNameForDb, identity.voterPhoneForDb, is_trial, now, expiresAt]
+        [
+          currentRound ? currentRound.id : null,
+          identity.voterNameForDb,
+          identity.cleanName,
+          identity.cleanPhone || null,
+          is_trial,
+          now,
+          expiresAt,
+        ]
       );
 
       const sessionId = sessionRes.rows[0].id;
@@ -411,7 +539,7 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // =========================================================================
-  // 4. GET /session/active: Nhận diện & khôi phục phiên dở dang (SĐT hoặc Tên)
+  // 4. GET /session/active: Nhận diện & khôi phục phiên dở dang
   // =========================================================================
   fastify.get<{
     Querystring: {
@@ -424,23 +552,25 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
       const phoneParam = (request.query.phone || '').trim().replace(/\D/g, '');
       const rawName = (request.query.name || '').trim();
       const cleanName = removeVietnameseTones(rawName);
-      const nameParam = cleanName.length >= 2 ? `name:${cleanName}` : '';
       const isTrial = request.query.is_trial === 'true';
 
-      if (!phoneParam && !nameParam) {
+      if (!phoneParam && !cleanName) {
         return reply.send({ success: true, active: false });
       }
 
+      const currentRound = await getCurrentElectionRound(pool);
+      const roundId = currentRound?.id || 1;
+
       const activeRes = await pool.query(
-        `SELECT id, voter_name, voter_phone, is_trial, started_at, expires_at,
+        `SELECT id, round_id, voter_name, clean_voter_name, voter_phone, is_trial, started_at, expires_at,
                 EXTRACT(EPOCH FROM (expires_at - NOW()))::int as remaining_seconds
          FROM giatruong.voting_sessions
          WHERE is_trial = $1 AND status = 'in_progress' AND expires_at > NOW() AND (
            ($2 <> '' AND voter_phone = $2) OR
-           ($3 <> '' AND voter_phone = $3)
+           ($3 <> '' AND clean_voter_name = $3)
          )
          ORDER BY started_at DESC LIMIT 1`,
-        [isTrial, phoneParam, nameParam]
+        [isTrial, phoneParam, cleanName]
       );
 
       if (activeRes.rows.length === 0) {
@@ -449,11 +579,11 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
 
       const sess = activeRes.rows[0];
 
-      // Đọc draft candidates từ Redis nếu có để khôi phục tức thì
+      // Đọc draft candidates từ Redis namespace theo round nếu có
       let draftCandidates: Array<number | string> = [];
       if (redis) {
         try {
-          const rawDraft = await redis.get(`giatruong:draft:${sess.id}`);
+          const rawDraft = await redis.get(`giatruong:round:${sess.round_id || roundId}:draft:${sess.id}`);
           if (rawDraft) {
             draftCandidates = JSON.parse(rawDraft);
           }
@@ -466,6 +596,7 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
         success: true,
         active: true,
         session_id: sess.id,
+        round_id: sess.round_id,
         voter_name: sess.voter_name,
         voter_phone: sess.voter_phone,
         is_trial: sess.is_trial,
@@ -481,7 +612,7 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // =========================================================================
-  // 5. POST /draft-pick: Đồng bộ lượt chọn nháp (Sliding Window Redis ZSET)
+  // 5. POST /draft-pick: Đồng bộ lượt chọn nháp (Redis Namespace per Round)
   // =========================================================================
   fastify.post<{
     Body: {
@@ -496,14 +627,17 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       if (redis) {
+        const currentRound = await getCurrentElectionRound(pool);
+        const roundId = currentRound?.id || 1;
+
         const now = Date.now();
         const pipeline = redis.pipeline();
 
-        // Đưa session vào ZSET với score là timestamp hiện tại
-        pipeline.zadd('giatruong:active_sessions', now, session_id);
+        // Đưa session vào ZSET của round hiện tại với score là timestamp
+        pipeline.zadd(`giatruong:round:${roundId}:active_sessions`, now, session_id);
 
-        // Lưu snapshot danh sách ứng viên mà cử tri đang chọn với TTL 10 phút (600s)
-        pipeline.setex(`giatruong:draft:${session_id}`, 600, JSON.stringify(candidate_ids));
+        // Lưu snapshot danh sách ứng viên với TTL 10 phút
+        pipeline.setex(`giatruong:round:${roundId}:draft:${session_id}`, 600, JSON.stringify(candidate_ids));
 
         await pipeline.exec();
       }
@@ -516,19 +650,22 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // =========================================================================
-  // 4. GET /live-status: Trực tiếp tiến độ 8 phút (Non-blocking, Secret Ballot, Top 10)
+  // 6. GET /live-status: Trực tiếp tiến độ (Non-blocking, Secret Ballot, Per-Round)
   // =========================================================================
   fastify.get<{
     Querystring: {
       limit?: string;
+      round_id?: string;
     };
   }>('/live-status', async (request, reply) => {
     try {
       const limit = parseInt(request.query?.limit || '10', 10);
-      const liveData = await computeLiveStatus(pool, redis, limit);
+      const targetRoundId = request.query?.round_id ? parseInt(request.query.round_id, 10) : null;
+      const liveData = await computeLiveStatus(pool, redis, limit, targetRoundId);
 
       return reply.send({
         success: true,
+        round_id: liveData.roundId,
         active_drafting_count: liveData.activeDraftingCount,
         total_submitted_votes: liveData.totalSubmittedVotes,
         custom_candidates_draft_count: liveData.customDraftCount,
@@ -542,7 +679,7 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // =========================================================================
-  // 5. POST /submit-vote: Nộp phiếu bầu cử với Connection Leak Guard & Upsert
+  // 7. POST /submit-vote: Nộp phiếu với Per-Round Idempotency & Clean Redis
   // =========================================================================
   fastify.post<{
     Body: {
@@ -569,7 +706,7 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
 
     // 1. Kiểm tra session hợp lệ và Hard Timeout
     const sessRes = await pool.query(
-      'SELECT id, voter_phone, is_trial, expires_at, status FROM giatruong.voting_sessions WHERE id = $1',
+      'SELECT id, round_id, voter_name, clean_voter_name, voter_phone, is_trial, expires_at, status FROM giatruong.voting_sessions WHERE id = $1',
       [session_id]
     );
 
@@ -625,7 +762,6 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
             throw new Error('Tên ứng viên tự nhập không được để trống.');
           }
 
-          // Upsert an toàn bằng PostgreSQL ON CONFLICT
           const upsertRes = await client.query(
             `INSERT INTO giatruong.candidates (name, clean_name, is_incumbent, is_active)
              VALUES ($1, $2, FALSE, TRUE)
@@ -647,12 +783,12 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      // Ghi nhận phiếu vào bảng giatruong.votes
+      // Ghi nhận phiếu vào bảng giatruong.votes kèm round_id và clean_voter_name
       const voteRes = await client.query(
-        `INSERT INTO giatruong.votes (session_id, voter_phone, is_trial, submitted_at)
-         VALUES ($1, $2, $3, NOW())
+        `INSERT INTO giatruong.votes (round_id, session_id, clean_voter_name, voter_phone, is_trial, submitted_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
          RETURNING id`,
-        [session_id, session.voter_phone, session.is_trial]
+        [session.round_id, session_id, session.clean_voter_name, session.voter_phone, session.is_trial]
       );
       const voteId = voteRes.rows[0].id;
 
@@ -671,21 +807,30 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
         [session_id]
       );
 
+      // Cập nhật total_votes của Round nếu là bầu thật
+      if (!session.is_trial && session.round_id) {
+        await client.query(
+          "UPDATE giatruong.election_rounds SET total_votes = total_votes + 1 WHERE id = $1",
+          [session.round_id]
+        );
+      }
+
       await client.query('COMMIT');
 
-      // Chống đếm trùng: Xóa ngay session khỏi Redis active draft sau khi đã submit thành công
+      // Chống đếm trùng: Xóa ngay session khỏi Redis active draft của round này
       if (redis) {
         try {
+          const roundId = session.round_id || 1;
           const pipeline = redis.pipeline();
-          pipeline.zrem('giatruong:active_sessions', session_id);
-          pipeline.del(`giatruong:draft:${session_id}`);
+          pipeline.zrem(`giatruong:round:${roundId}:active_sessions`, session_id);
+          pipeline.del(`giatruong:round:${roundId}:draft:${session_id}`);
           await pipeline.exec();
         } catch (rErr) {
           fastify.log.warn(rErr, '[REDIS DRAFT CLEANUP WARN]');
         }
       }
 
-      // Kích hoạt phát sóng Zalo theo mốc submit (~10 mốc cả buổi 40 cử tri)
+      // Kích hoạt phát sóng Zalo theo mốc submit
       if (!session.is_trial) {
         setImmediate(() => {
           triggerLiveBroadcastIfEligible(pool, redis, fastify.log);
@@ -707,16 +852,17 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
         message: 'Lỗi ghi nhận phiếu bầu: ' + (err.message || 'Lỗi cơ sở dữ liệu.'),
       });
     } finally {
-      client.release(); // Giải phóng kết nối về pool bảo đảm không leak
+      client.release();
     }
   });
 
   // =========================================================================
-  // 6. GET /admin/results: Bảng tổng kết kết quả phiếu bầu (Real-time)
+  // 8. GET /admin/results: Bảng tổng kết kết quả phiếu bầu (Real-time Round)
   // =========================================================================
   fastify.get<{
     Querystring: {
       token?: string;
+      round_id?: string;
     };
   }>('/admin/results', async (request, reply) => {
     try {
@@ -731,27 +877,31 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(401).send({ success: false, message: 'Sai mã xác thực Ban Tổ Chức (Unauthorized).' });
       }
 
-      // Thống kê tổng số phiếu
+      const currentRound = await getCurrentElectionRound(pool);
+      const roundId = request.query?.round_id ? parseInt(request.query.round_id, 10) : (currentRound?.id || 1);
+
+      // Thống kê tổng số phiếu trong round này
       const countRes = await pool.query(`
         SELECT 
           COUNT(*) FILTER (WHERE is_trial = FALSE) as total_real_votes,
           COUNT(*) FILTER (WHERE is_trial = TRUE) as total_trial_votes
         FROM giatruong.votes
-      `);
+        WHERE round_id = $1 OR is_trial = TRUE
+      `, [roundId]);
       const { total_real_votes, total_trial_votes } = countRes.rows[0];
 
-      // Thống kê danh sách ứng viên Bầu Thật
+      // Thống kê danh sách ứng viên Bầu Thật của round này
       const realRankRes = await pool.query(`
         SELECT 
           c.id, c.name, c.is_incumbent,
           COUNT(vd.id) as vote_count
         FROM giatruong.candidates c
         LEFT JOIN giatruong.vote_details vd ON c.id = vd.candidate_id
-        LEFT JOIN giatruong.votes v ON vd.vote_id = v.id AND v.is_trial = FALSE
+        LEFT JOIN giatruong.votes v ON vd.vote_id = v.id AND v.is_trial = FALSE AND v.round_id = $1
         WHERE c.is_active = TRUE
         GROUP BY c.id, c.name, c.is_incumbent
         ORDER BY vote_count DESC, c.is_incumbent DESC, c.id ASC
-      `);
+      `, [roundId]);
 
       // Thống kê danh sách ứng viên Bầu Thử
       const trialRankRes = await pool.query(`
@@ -768,6 +918,8 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
 
       return reply.send({
         success: true,
+        round_id: roundId,
+        round_number: currentRound?.round_number || 1,
         total_real_votes: parseInt(total_real_votes || '0', 10),
         total_trial_votes: parseInt(total_trial_votes || '0', 10),
         real_ranking: realRankRes.rows.map((r) => ({
@@ -786,7 +938,422 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // =========================================================================
-  // 7. POST /admin/settings: Cập nhật trạng thái cổng & thời lượng
+  // 9. BỘ API QUẢN TRỊ ĐỢT BẦU CỬ (ELECTION ROUNDS)
+  // =========================================================================
+
+  // 9.1 POST /admin/schedule-round: Ấn định thời gian bắt đầu
+  fastify.post<{
+    Body: {
+      title?: string;
+      duration_minutes?: number;
+      start_mode?: 'now' | 'delay_minutes' | 'fixed_time';
+      delay_minutes?: number;
+      scheduled_start_at?: string;
+      fixed_time?: string; // "19:30"
+      notes?: string;
+    };
+  }>('/admin/schedule-round', async (request, reply) => {
+    try {
+      const headerToken = request.headers['x-admin-token'] || (request.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      const secretRes = await pool.query("SELECT value FROM giatruong.settings WHERE key = 'admin_secret_token'");
+      const expectedToken = secretRes.rows[0]?.value || 'admin_secret_giatruong_2026';
+
+      if (!headerToken || headerToken !== expectedToken) {
+        return reply.status(401).send({ success: false, message: 'Sai mã xác thực Ban Tổ Chức (Unauthorized).' });
+      }
+
+      const { title, duration_minutes = 8, start_mode, delay_minutes, fixed_time, scheduled_start_at } = request.body || {};
+      const now = new Date();
+      let scheduledStartAt: Date;
+      let status: 'scheduled' | 'in_progress' = 'scheduled';
+
+      if (scheduled_start_at) {
+        scheduledStartAt = new Date(scheduled_start_at);
+        if (scheduledStartAt <= now) {
+          scheduledStartAt = now;
+          status = 'in_progress';
+        } else {
+          status = 'scheduled';
+        }
+      } else if (delay_minutes !== undefined && delay_minutes > 0) {
+        scheduledStartAt = new Date(now.getTime() + delay_minutes * 60 * 1000);
+        status = 'scheduled';
+      } else if (start_mode === 'now' || delay_minutes === 0) {
+        scheduledStartAt = now;
+        status = 'in_progress';
+      } else if (start_mode === 'delay_minutes') {
+        const dMin = delay_minutes || 5;
+        scheduledStartAt = new Date(now.getTime() + dMin * 60 * 1000);
+        status = 'scheduled';
+      } else if ((start_mode === 'fixed_time' || fixed_time) && fixed_time) {
+        const [h, m] = fixed_time.split(':').map((v) => parseInt(v, 10));
+        scheduledStartAt = new Date(now);
+        scheduledStartAt.setHours(h, m, 0, 0);
+        if (scheduledStartAt <= now) {
+          scheduledStartAt = now;
+          status = 'in_progress';
+        } else {
+          status = 'scheduled';
+        }
+      } else {
+        scheduledStartAt = new Date(now.getTime() + 5 * 60 * 1000);
+        status = 'scheduled';
+      }
+
+      const expiresAt = new Date(scheduledStartAt.getTime() + duration_minutes * 60 * 1000);
+
+      // Lấy số thứ tự round tiếp theo
+      const maxRes = await pool.query('SELECT COALESCE(MAX(round_number), 0) as max_round FROM giatruong.election_rounds');
+      const nextRoundNum = (parseInt(maxRes.rows[0]?.max_round || '0', 10)) + 1;
+      const roundTitle = title || `Bầu Cử Ban Điều Hành Gia Trưởng - Đợt ${nextRoundNum}`;
+
+      // Đóng các round cũ nếu đang mở
+      await pool.query(
+        "UPDATE giatruong.election_rounds SET status = 'completed', ended_at = COALESCE(ended_at, NOW()) WHERE status IN ('scheduled', 'in_progress')"
+      );
+
+      // Tạo round mới
+      const insertRes = await pool.query(
+        `INSERT INTO giatruong.election_rounds (round_number, title, status, scheduled_start_at, started_at, expires_at, duration_minutes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id`,
+        [
+          nextRoundNum,
+          roundTitle,
+          status,
+          scheduledStartAt,
+          status === 'in_progress' ? now : null,
+          expiresAt,
+          duration_minutes,
+        ]
+      );
+      const newRoundId = insertRes.rows[0].id;
+
+      // Cập nhật current_round_id và voting_status = 'real_only'
+      await pool.query(
+        "INSERT INTO giatruong.settings (key, value, updated_at) VALUES ('current_round_id', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+        [String(newRoundId)]
+      );
+      await pool.query(
+        "INSERT INTO giatruong.settings (key, value, updated_at) VALUES ('voting_status', 'real_only', NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()"
+      );
+
+      return reply.send({
+        success: true,
+        message: status === 'in_progress'
+          ? `Đã kích hoạt Đợt ${nextRoundNum} bắt đầu ngay lập tức!`
+          : `Đã ấn định Đợt ${nextRoundNum} mở cổng lúc ${scheduledStartAt.toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}.`,
+        round: {
+          id: newRoundId,
+          round_number: nextRoundNum,
+          title: roundTitle,
+          status,
+          scheduled_start_at: scheduledStartAt.toISOString(),
+          expires_at: expiresAt.toISOString(),
+          duration_minutes,
+        },
+      });
+    } catch (err: any) {
+      fastify.log.error(err, '[GIATRUONG /admin/schedule-round ERROR]');
+      return reply.status(500).send({ success: false, message: err.message });
+    }
+  });
+
+  // 9.2 POST /admin/new-round: Khởi động Đợt mới (Reset về 0 + Lưu vết)
+  fastify.post<{
+    Body: {
+      duration_minutes?: number;
+      delay_minutes?: number;
+      scheduled_start_at?: string;
+      title?: string;
+      notes?: string;
+    };
+  }>('/admin/new-round', async (request, reply) => {
+    try {
+      const headerToken = request.headers['x-admin-token'] || (request.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      const secretRes = await pool.query("SELECT value FROM giatruong.settings WHERE key = 'admin_secret_token'");
+      const expectedToken = secretRes.rows[0]?.value || 'admin_secret_giatruong_2026';
+
+      if (!headerToken || headerToken !== expectedToken) {
+        return reply.status(401).send({ success: false, message: 'Sai mã xác thực Ban Tổ Chức (Unauthorized).' });
+      }
+
+      const { duration_minutes = 8, delay_minutes = 0, scheduled_start_at, title } = request.body || {};
+      const now = new Date();
+
+      let status: 'scheduled' | 'in_progress' = 'in_progress';
+      let scheduledStartAt: Date | null = null;
+      let startedAt: Date | null = now;
+      let expiresAt: Date;
+
+      if (scheduled_start_at) {
+        scheduledStartAt = new Date(scheduled_start_at);
+        if (scheduledStartAt > now) {
+          status = 'scheduled';
+          startedAt = null;
+          expiresAt = new Date(scheduledStartAt.getTime() + duration_minutes * 60 * 1000);
+        } else {
+          expiresAt = new Date(now.getTime() + duration_minutes * 60 * 1000);
+        }
+      } else if (delay_minutes > 0) {
+        status = 'scheduled';
+        scheduledStartAt = new Date(now.getTime() + delay_minutes * 60 * 1000);
+        startedAt = null;
+        expiresAt = new Date(scheduledStartAt.getTime() + duration_minutes * 60 * 1000);
+      } else {
+        expiresAt = new Date(now.getTime() + duration_minutes * 60 * 1000);
+      }
+
+      // Chốt round cũ
+      const oldRoundRes = await pool.query("SELECT id FROM giatruong.election_rounds WHERE status IN ('scheduled', 'in_progress') ORDER BY id DESC LIMIT 1");
+      const oldRoundId = oldRoundRes.rows[0]?.id;
+      if (oldRoundId) {
+        await pool.query(
+          "UPDATE giatruong.election_rounds SET status = 'completed', ended_at = NOW() WHERE id = $1",
+          [oldRoundId]
+        );
+        // Dọn dẹp rác Redis round cũ
+        if (redis) {
+          try {
+            await redis.del(`giatruong:round:${oldRoundId}:active_sessions`);
+          } catch {}
+        }
+      }
+
+      const maxRes = await pool.query('SELECT COALESCE(MAX(round_number), 0) as max_round FROM giatruong.election_rounds');
+      const nextRoundNum = (parseInt(maxRes.rows[0]?.max_round || '0', 10)) + 1;
+      const roundTitle = title || `Bầu Cử Ban Điều Hành Gia Trưởng - Đợt ${nextRoundNum}`;
+
+      const insertRes = await pool.query(
+        `INSERT INTO giatruong.election_rounds (round_number, title, status, scheduled_start_at, started_at, expires_at, duration_minutes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id`,
+        [nextRoundNum, roundTitle, status, scheduledStartAt, startedAt, expiresAt, duration_minutes]
+      );
+      const newRoundId = insertRes.rows[0].id;
+
+      await pool.query(
+        "INSERT INTO giatruong.settings (key, value, updated_at) VALUES ('current_round_id', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+        [String(newRoundId)]
+      );
+      await pool.query(
+        "INSERT INTO giatruong.settings (key, value, updated_at) VALUES ('voting_status', 'real_only', NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()"
+      );
+
+      return reply.send({
+        success: true,
+        message: `Đã khởi động Đợt ${nextRoundNum}! Toàn bộ kết quả đã được reset về 0.`,
+        round: {
+          id: newRoundId,
+          round_number: nextRoundNum,
+          title: roundTitle,
+          status,
+          scheduled_start_at: scheduledStartAt?.toISOString(),
+          started_at: startedAt?.toISOString(),
+          expires_at: expiresAt.toISOString(),
+          duration_minutes,
+        },
+      });
+    } catch (err: any) {
+      fastify.log.error(err, '[GIATRUONG /admin/new-round ERROR]');
+      return reply.status(500).send({ success: false, message: err.message });
+    }
+  });
+
+  // 9.3 POST /admin/reschedule-round: Đổi giờ hoặc Hủy đợt bầu
+  fastify.post<{
+    Body: {
+      action: 'reschedule' | 'cancel' | 'delay' | 'start_now';
+      delay_minutes?: number;
+      add_minutes?: number;
+      fixed_time?: string;
+    };
+  }>('/admin/reschedule-round', async (request, reply) => {
+    try {
+      const headerToken = request.headers['x-admin-token'] || (request.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      const secretRes = await pool.query("SELECT value FROM giatruong.settings WHERE key = 'admin_secret_token'");
+      const expectedToken = secretRes.rows[0]?.value || 'admin_secret_giatruong_2026';
+
+      if (!headerToken || headerToken !== expectedToken) {
+        return reply.status(401).send({ success: false, message: 'Sai mã xác thực Ban Tổ Chức (Unauthorized).' });
+      }
+
+      const { action, delay_minutes = 5, add_minutes, fixed_time } = request.body || {};
+      const currentRound = await getCurrentElectionRound(pool);
+
+      if (!currentRound) {
+        return reply.status(404).send({ success: false, message: 'Không tìm thấy đợt bầu cử hiện hành.' });
+      }
+
+      const now = new Date();
+      const durationMin = currentRound.duration_minutes || 8;
+
+      if (action === 'cancel') {
+        await pool.query("UPDATE giatruong.election_rounds SET status = 'cancelled', ended_at = NOW() WHERE id = $1", [currentRound.id]);
+        await pool.query("UPDATE giatruong.settings SET value = 'closed', updated_at = NOW() WHERE key = 'voting_status'");
+        return reply.send({ success: true, message: 'Đã tạm hoãn đợt bầu cử hiện tại và đóng cổng.' });
+      }
+
+      if (action === 'start_now') {
+        const expiresAt = new Date(now.getTime() + durationMin * 60 * 1000);
+        await pool.query(
+          "UPDATE giatruong.election_rounds SET status = 'in_progress', started_at = $1, expires_at = $2 WHERE id = $3",
+          [now, expiresAt, currentRound.id]
+        );
+        await pool.query("UPDATE giatruong.settings SET value = 'real_only', updated_at = NOW() WHERE key = 'voting_status'");
+        return reply.send({
+          success: true,
+          message: 'Đã kích hoạt đợt bầu cử bắt đầu ngay lập tức.',
+          round: {
+            id: currentRound.id,
+            status: 'in_progress',
+            started_at: now.toISOString(),
+            expires_at: expiresAt.toISOString(),
+          },
+        });
+      }
+
+      let newStartAt: Date;
+      if (action === 'delay') {
+        const addMin = add_minutes || delay_minutes || 2;
+        const currentStart = currentRound.scheduled_start_at ? new Date(currentRound.scheduled_start_at) : now;
+        const base = currentStart > now ? currentStart : now;
+        newStartAt = new Date(base.getTime() + addMin * 60 * 1000);
+      } else if (fixed_time) {
+        const [h, m] = fixed_time.split(':').map((v) => parseInt(v, 10));
+        newStartAt = new Date(now);
+        newStartAt.setHours(h, m, 0, 0);
+        if (newStartAt <= now) {
+          newStartAt.setDate(newStartAt.getDate() + 1);
+        }
+      } else {
+        newStartAt = new Date(now.getTime() + delay_minutes * 60 * 1000);
+      }
+
+      const newExpiresAt = new Date(newStartAt.getTime() + durationMin * 60 * 1000);
+
+      await pool.query(
+        "UPDATE giatruong.election_rounds SET status = 'scheduled', scheduled_start_at = $1, expires_at = $2 WHERE id = $3",
+        [newStartAt, newExpiresAt, currentRound.id]
+      );
+
+      return reply.send({
+        success: true,
+        message: `Đã đổi giờ mở cổng sang ${newStartAt.toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}.`,
+        round: {
+          id: currentRound.id,
+          status: 'scheduled',
+          scheduled_start_at: newStartAt.toISOString(),
+          expires_at: newExpiresAt.toISOString(),
+        },
+      });
+    } catch (err: any) {
+      fastify.log.error(err, '[GIATRUONG /admin/reschedule-round ERROR]');
+      return reply.status(500).send({ success: false, message: err.message });
+    }
+  });
+
+  // 9.4 GET /admin/rounds: Lịch sử toàn bộ các đợt bầu cử
+  fastify.get<{
+    Querystring: {
+      token?: string;
+    };
+  }>('/admin/rounds', async (request, reply) => {
+    try {
+      const headerToken = request.headers['x-admin-token'] || (request.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      const queryToken = request.query.token;
+      const token = headerToken || queryToken;
+
+      const secretRes = await pool.query("SELECT value FROM giatruong.settings WHERE key = 'admin_secret_token'");
+      const expectedToken = secretRes.rows[0]?.value || 'admin_secret_giatruong_2026';
+
+      if (!token || token !== expectedToken) {
+        return reply.status(401).send({ success: false, message: 'Sai mã xác thực Ban Tổ Chức (Unauthorized).' });
+      }
+
+      const roundsRes = await pool.query(`
+        SELECT r.*,
+               COUNT(v.id) FILTER (WHERE v.is_trial = FALSE) as actual_votes_count
+        FROM giatruong.election_rounds r
+        LEFT JOIN giatruong.votes v ON r.id = v.round_id
+        GROUP BY r.id
+        ORDER BY r.round_number DESC, r.id DESC
+      `);
+
+      return reply.send({
+        success: true,
+        rounds: roundsRes.rows.map((r) => ({
+          ...r,
+          actual_votes_count: parseInt(r.actual_votes_count || '0', 10),
+        })),
+      });
+    } catch (err: any) {
+      fastify.log.error(err, '[GIATRUONG /admin/rounds ERROR]');
+      return reply.status(500).send({ success: false, message: err.message });
+    }
+  });
+
+  // 9.5 GET /admin/rounds/:id/results: Bảng kết quả chi tiết của 1 round cụ thể
+  fastify.get<{
+    Params: {
+      id: string;
+    };
+    Querystring: {
+      token?: string;
+    };
+  }>('/admin/rounds/:id/results', async (request, reply) => {
+    try {
+      const headerToken = request.headers['x-admin-token'] || (request.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      const queryToken = request.query.token;
+      const token = headerToken || queryToken;
+
+      const secretRes = await pool.query("SELECT value FROM giatruong.settings WHERE key = 'admin_secret_token'");
+      const expectedToken = secretRes.rows[0]?.value || 'admin_secret_giatruong_2026';
+
+      if (!token || token !== expectedToken) {
+        return reply.status(401).send({ success: false, message: 'Sai mã xác thực Ban Tổ Chức (Unauthorized).' });
+      }
+
+      const roundId = parseInt(request.params.id, 10);
+      const roundRes = await pool.query('SELECT * FROM giatruong.election_rounds WHERE id = $1', [roundId]);
+      if (roundRes.rows.length === 0) {
+        return reply.status(404).send({ success: false, message: 'Không tìm thấy đợt bầu cử này.' });
+      }
+
+      const rankRes = await pool.query(`
+        SELECT 
+          c.id, c.name, c.is_incumbent,
+          COUNT(vd.id) as vote_count
+        FROM giatruong.candidates c
+        LEFT JOIN giatruong.vote_details vd ON c.id = vd.candidate_id
+        LEFT JOIN giatruong.votes v ON vd.vote_id = v.id AND v.is_trial = FALSE AND v.round_id = $1
+        WHERE c.is_active = TRUE
+        GROUP BY c.id, c.name, c.is_incumbent
+        ORDER BY vote_count DESC, c.is_incumbent DESC, c.id ASC
+      `, [roundId]);
+
+      const countRes = await pool.query(
+        'SELECT COUNT(*) as total_votes FROM giatruong.votes WHERE round_id = $1 AND is_trial = FALSE',
+        [roundId]
+      );
+
+      return reply.send({
+        success: true,
+        round: roundRes.rows[0],
+        total_votes: parseInt(countRes.rows[0]?.total_votes || '0', 10),
+        ranking: rankRes.rows.map((r) => ({
+          ...r,
+          vote_count: parseInt(r.vote_count || '0', 10),
+        })),
+      });
+    } catch (err: any) {
+      fastify.log.error(err, '[GIATRUONG /admin/rounds/:id/results ERROR]');
+      return reply.status(500).send({ success: false, message: err.message });
+    }
+  });
+
+  // =========================================================================
+  // 10. POST /admin/settings: Cập nhật cấu hình chung
   // =========================================================================
   fastify.post<{
     Body: {
@@ -812,6 +1379,34 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
           "INSERT INTO giatruong.settings (key, value, updated_at) VALUES ('voting_status', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
           [voting_status]
         );
+
+        if (voting_status === 'real_only') {
+          const currentRound = await getCurrentElectionRound(pool);
+          const durationSettingRes = await pool.query("SELECT value FROM giatruong.settings WHERE key = 'real_duration_minutes'");
+          const durationMin = real_duration_minutes || parseInt(durationSettingRes.rows[0]?.value || '8', 10);
+          const now = new Date();
+          const expiresAt = new Date(now.getTime() + durationMin * 60 * 1000);
+
+          if (!currentRound || currentRound.status === 'completed' || currentRound.status === 'cancelled') {
+            const maxRes = await pool.query('SELECT COALESCE(MAX(round_number), 0) as max_round FROM giatruong.election_rounds');
+            const nextRoundNum = (parseInt(maxRes.rows[0]?.max_round || '0', 10)) + 1;
+            const roundTitle = `Bầu Cử Ban Điều Hành Gia Trưởng - Đợt ${nextRoundNum}`;
+            const insertRes = await pool.query(
+              `INSERT INTO giatruong.election_rounds (round_number, title, status, started_at, expires_at, duration_minutes)
+               VALUES ($1, $2, 'in_progress', $3, $4, $5) RETURNING id`,
+              [nextRoundNum, roundTitle, now, expiresAt, durationMin]
+            );
+            await pool.query(
+              "INSERT INTO giatruong.settings (key, value, updated_at) VALUES ('current_round_id', $1, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+              [String(insertRes.rows[0].id)]
+            );
+          } else if (currentRound.status === 'scheduled') {
+            await pool.query(
+              "UPDATE giatruong.election_rounds SET status = 'in_progress', started_at = $1, expires_at = $2 WHERE id = $3",
+              [now, expiresAt, currentRound.id]
+            );
+          }
+        }
       }
       if (real_duration_minutes && real_duration_minutes > 0) {
         await pool.query(
@@ -840,7 +1435,7 @@ export const giatruongRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   // =========================================================================
-  // 8. POST /admin/reset-trial: Reset chỉ các lượt bầu thử (cho phép thử lại nhiều lần)
+  // 11. POST /admin/reset-trial: Reset chỉ các lượt bầu thử
   // =========================================================================
   fastify.post('/admin/reset-trial', async (request, reply) => {
     try {

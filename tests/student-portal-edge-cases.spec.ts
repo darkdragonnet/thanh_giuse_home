@@ -514,6 +514,9 @@ describe('Strict Edge-Case Test Suite: Cổng Học Sinh, Header RFC 7230, Zalo 
     expect(classesHtml1).toBe(classesHtml2);
     expect(classesHtml1).toContain('/api/public/classes');
     expect(classesHtml1).toContain('window.location.origin');
+    expect(classesHtml1).toContain('LỚP BAO ĐỒNG 1C');
+    expect(classesHtml1).toContain('CLASS_FULL_NAME_MAP');
+    expect(classesHtml1).toContain('btnCopyAllLinks');
 
     // 8.3. Kiểm thử Nginx route /classes trong default.conf
     const nginxConf = fs.readFileSync(path.resolve('docker/nginx/default.conf'), 'utf8');

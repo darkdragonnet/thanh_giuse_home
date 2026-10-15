@@ -76,11 +76,37 @@
 
         <!-- Chế độ Bầu Thật -->
         <template x-if="config.voting_status === 'real_only'">
-          <button type="button" @click="handleStartClick(false)" :disabled="!isFormValid || loading"
-                  class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-extrabold text-sm rounded-2xl shadow-lg transition transform active:scale-95 flex items-center justify-center space-x-2">
-            <span x-show="!loading">🗳️ BẮT ĐẦU BẦU CHÍNH THỨC (<span x-text="config.real_duration_minutes"></span> PHÚT)</span>
-            <span x-show="loading">Đang kết nối...</span>
-          </button>
+          <div>
+            <!-- Đã hẹn giờ và chưa tới giờ: Nút vào phòng chờ -->
+            <template x-if="isScheduledWaiting">
+              <button type="button" @click="enterWaitingRoom()" :disabled="!isFormValid || loading"
+                      class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-extrabold text-sm rounded-2xl shadow-lg transition transform active:scale-95 flex flex-col items-center justify-center space-y-1">
+                <span>⏱️ XÁC NHẬN & VÀO PHÒNG CHỜ</span>
+                <span class="text-[11px] font-normal text-indigo-200">
+                  (Cổng sẽ mở lúc <span x-text="scheduledStartFormatted"></span>)
+                </span>
+              </button>
+            </template>
+
+            <!-- Đợt bầu đã kết thúc -->
+            <template x-if="isRoundExpired">
+              <button type="button" disabled class="w-full py-4 bg-slate-200 text-slate-500 font-bold text-sm rounded-2xl cursor-not-allowed text-center border border-slate-300">
+                ⛔ ĐỢT BẦU CỬ ĐÃ KẾT THÚC
+              </button>
+            </template>
+
+            <!-- Đang diễn ra trực tiếp -->
+            <template x-if="!isScheduledWaiting && !isRoundExpired">
+              <button type="button" @click="handleStartClick(false)" :disabled="!isFormValid || loading"
+                      class="w-full py-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-extrabold text-sm rounded-2xl shadow-lg transition transform active:scale-95 flex flex-col items-center justify-center space-y-1">
+                <span x-show="!loading">🗳️ VÀO BẦU CHÍNH THỨC</span>
+                <span x-show="!loading" class="text-[11px] font-normal text-emerald-100">
+                  (Thời gian còn lại của đợt: <span x-text="roundRemainingFormatted"></span>)
+                </span>
+                <span x-show="loading">Đang kết nối...</span>
+              </button>
+            </template>
+          </div>
         </template>
 
         <!-- Chế độ Đóng Cổng -->
@@ -95,6 +121,31 @@
         <a href="/giatruong/ket-qua" class="text-xs text-indigo-600 font-semibold hover:underline">
           📊 Xem Bảng Xếp Hạng Kết Quả Hiện Tại
         </a>
+      </div>
+    </div>
+
+    <!-- ==================== CHẶNG 1.5: PHÒNG CHỜ ĐẾM NGƯỢC (WAITING ROOM) ==================== -->
+    <div x-show="stage === 1.5" class="space-y-4">
+      <div class="bg-indigo-900 text-white p-6 rounded-3xl shadow-xl text-center space-y-4 border border-indigo-700">
+        <div class="inline-block px-3 py-1 bg-amber-400 text-amber-950 font-black text-xs uppercase rounded-full shadow-sm">
+          ⏳ Cổng mở lúc: <span x-text="scheduledStartFormatted"></span>
+        </div>
+        <div>
+          <h2 class="text-xs uppercase text-indigo-300 font-bold tracking-wider">Thời Gian Đếm Ngược Đến Giờ G</h2>
+          <div class="text-5xl font-mono font-black text-amber-300 tracking-wider my-3" x-text="waitingCountdownFormatted"></div>
+        </div>
+        <div class="bg-indigo-800/60 p-3.5 rounded-2xl border border-indigo-700/80 text-xs text-indigo-100 space-y-1 text-left">
+          <p>👤 Cử tri: <b><span x-text="voterName || 'Cử tri'"></span></b> <span x-show="voterPhone" x-text="'(' + voterPhone + ')'"></span></p>
+          <p>✨ Trạng thái: <b class="text-emerald-300">Đã sẵn sàng trong phòng chờ</b></p>
+          <p class="text-[11px] text-indigo-300 pt-1 border-t border-indigo-700/50">
+            💡 Hệ thống sẽ <b>tự động mở màn hình chọn ứng viên</b> ngay khi đếm về 00:00. Quý cử tri không cần tải lại trang.
+          </p>
+        </div>
+        <div>
+          <button type="button" @click="leaveWaitingRoom()" class="text-xs text-indigo-300 hover:text-white underline">
+            ✏️ Đổi lại thông tin cử tri
+          </button>
+        </div>
       </div>
     </div>
 
@@ -258,6 +309,11 @@
         // Đồng bộ lượt chọn nháp lên server
         draftDebounceTimer: null,
 
+        // Trạng thái Phòng Chờ (Waiting Room)
+        waitingSeconds: 0,
+        waitingInterval: null,
+        heartbeatInterval: null,
+
         async init() {
           this.loadDraftInfo();
           await this.loadConfig();
@@ -276,6 +332,42 @@
           const cleanPhone = this.voterPhone.trim().replace(/\D/g, '');
           const cleanName = this.voterName.trim();
           return cleanName.length >= 2 || (cleanPhone.length >= 9 && cleanPhone.length <= 12);
+        },
+
+        get isScheduledWaiting() {
+          return this.config.voting_status === 'real_only' &&
+                 this.config.current_round &&
+                 this.config.current_round.status === 'scheduled' &&
+                 this.config.current_round.remaining_seconds_to_start > 0;
+        },
+
+        get isRoundExpired() {
+          return this.config.voting_status === 'real_only' &&
+                 this.config.current_round &&
+                 (this.config.current_round.status === 'completed' || this.config.current_round.remaining_seconds_to_end <= 0);
+        },
+
+        get scheduledStartFormatted() {
+          if (!this.config.current_round?.scheduled_start_at) return '';
+          return new Date(this.config.current_round.scheduled_start_at).toLocaleTimeString('vi-VN', {
+            timeZone: 'Asia/Ho_Chi_Minh',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          });
+        },
+
+        get waitingCountdownFormatted() {
+          const m = Math.floor(this.waitingSeconds / 60);
+          const s = this.waitingSeconds % 60;
+          return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+        },
+
+        get roundRemainingFormatted() {
+          if (!this.config.current_round?.remaining_seconds_to_end) return '00:00';
+          const m = Math.floor(this.config.current_round.remaining_seconds_to_end / 60);
+          const s = this.config.current_round.remaining_seconds_to_end % 60;
+          return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
         },
 
         get selectedCount() {
@@ -473,6 +565,59 @@
           }
         },
 
+        enterWaitingRoom() {
+          this.initAudioContext();
+          this.saveDraftInfo();
+          this.stage = 1.5;
+          if (this.config.current_round?.remaining_seconds_to_start) {
+            this.waitingSeconds = this.config.current_round.remaining_seconds_to_start;
+          }
+          this.startWaitingTimer();
+        },
+
+        leaveWaitingRoom() {
+          if (this.waitingInterval) clearInterval(this.waitingInterval);
+          if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+          this.stage = 1;
+        },
+
+        startWaitingTimer() {
+          if (this.waitingInterval) clearInterval(this.waitingInterval);
+          if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+
+          // Heartbeat 5s gọi GET /config để phát hiện nếu Admin đổi giờ hoặc hủy
+          this.heartbeatInterval = setInterval(async () => {
+            await this.loadConfig();
+            if (this.config.voting_status === 'closed' || this.config.current_round?.status === 'cancelled') {
+              this.leaveWaitingRoom();
+              this.errorMessage = 'Ban Tổ Chức đã tạm hoãn hoặc đóng đợt bầu cử này.';
+            } else if (this.config.current_round?.scheduled_start_at) {
+              const nowEff = Date.now() + this.serverOffsetMs;
+              const targetMs = new Date(this.config.current_round.scheduled_start_at).getTime();
+              this.waitingSeconds = Math.max(0, Math.round((targetMs - nowEff) / 1000));
+            }
+          }, 5000);
+
+          // Đếm ngược 1s
+          this.waitingInterval = setInterval(() => {
+            const nowEff = Date.now() + this.serverOffsetMs;
+            const targetMs = this.config.current_round?.scheduled_start_at
+              ? new Date(this.config.current_round.scheduled_start_at).getTime()
+              : nowEff;
+            this.waitingSeconds = Math.max(0, Math.round((targetMs - nowEff) / 1000));
+
+            if (this.waitingSeconds <= 0) {
+              clearInterval(this.waitingInterval);
+              clearInterval(this.heartbeatInterval);
+              // Thêm jitter ngẫu nhiên 0-800ms để chống Thundering Herd
+              const jitter = Math.floor(Math.random() * 800);
+              setTimeout(() => {
+                this.handleStartClick(false);
+              }, jitter);
+            }
+          }, 1000);
+        },
+
         async handleStartClick(isTrial) {
           this.initAudioContext();
           this.loading = true;
@@ -497,7 +642,8 @@
 
             this.sessionId = data.session_id;
             this.isTrialSession = isTrial;
-            this.totalSeconds = data.duration_seconds;
+            const defaultDuration = (isTrial ? this.config.trial_duration_minutes : this.config.real_duration_minutes) * 60;
+            this.totalSeconds = defaultDuration || data.duration_seconds || 480;
             this.remainingSeconds = data.duration_seconds;
             this.expiresAtMs = new Date(data.expires_at).getTime();
 
@@ -510,7 +656,7 @@
               sessionId: data.session_id,
               isTrial: isTrial,
               expiresAt: this.expiresAtMs,
-              totalSeconds: data.duration_seconds,
+              totalSeconds: this.totalSeconds,
               voterName: this.voterName,
               voterPhone: this.voterPhone
             }));
@@ -729,6 +875,8 @@
         },
 
         resetToStart() {
+          if (this.waitingInterval) clearInterval(this.waitingInterval);
+          if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
           this.stage = 1;
           this.slots = Array.from({ length: 8 }, () => ({ selected: null, search: '' }));
           this.errorMessage = '';
