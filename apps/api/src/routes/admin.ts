@@ -311,6 +311,107 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
     });
 
+    // 4.3. POST /api/admin/classes/:id/requeue-pending (Giải cứu toàn bộ học sinh pending trong lớp)
+    protectedRoutes.post('/classes/:id/requeue-pending', async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const classId = Number(id);
+      const cls = await classRepo.findById(classId);
+      if (!cls) {
+        return reply.status(404).send({ success: false, message: 'Không tìm thấy lớp học' });
+      }
+
+      const pendingStudentsRes = await fastify.pg.query<{
+        id: number;
+        name: string;
+        alias_id: string | null;
+        qr_token: string;
+        local_image_path: string | null;
+        person_id: string | null;
+      }>(
+        `SELECT id, name, alias_id, qr_token, local_image_path, person_id 
+         FROM students 
+         WHERE class_id = $1 AND status = 'pending' 
+         ORDER BY id ASC`,
+        [classId]
+      );
+
+      const pendingStudents = pendingStudentsRes.rows;
+      if (pendingStudents.length === 0) {
+        return reply.send({
+          success: true,
+          requeuedCount: 0,
+          resetCount: 0,
+          message: `Lớp ${cls.code} không có học sinh nào đang bị kẹt pending.`,
+        });
+      }
+
+      let requeuedCount = 0;
+      let resetCount = 0;
+
+      for (const student of pendingStudents) {
+        let hasImage = false;
+        let finalImagePath = student.local_image_path;
+
+        if (finalImagePath) {
+          if (fs.existsSync(finalImagePath)) {
+            hasImage = true;
+          } else {
+            const uploadDir = process.env.UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
+            const candidate = path.join(uploadDir, path.basename(finalImagePath));
+            if (fs.existsSync(candidate)) {
+              hasImage = true;
+              finalImagePath = candidate;
+            }
+          }
+        }
+
+        const safeIdentifier = student.alias_id || student.qr_token || String(student.id);
+        const isUpdate = Boolean(student.person_id);
+        const actionType = isUpdate ? 'UPDATE_PHOTO' : 'REGISTER';
+
+        if (hasImage && finalImagePath) {
+          const tempFilename = path.basename(finalImagePath);
+          const jobId = `requeue_${safeIdentifier}_${Date.now()}`;
+
+          await registrationQueue.add(
+            isUpdate ? 'override-photo' : 'register',
+            {
+              studentId: student.id,
+              aliasId: student.alias_id || undefined,
+              qrToken: student.qr_token,
+              studentName: student.name,
+              classCode: cls.code,
+              tempFilename,
+              uploadedAt: Date.now(),
+              actionType,
+              ...(student.person_id ? { personId: student.person_id } : {}),
+            },
+            {
+              jobId,
+              priority: 1,
+              removeOnComplete: true,
+            }
+          );
+          requeuedCount++;
+        } else {
+          await fastify.pg.query(
+            `UPDATE students 
+             SET status = 'empty', local_image_path = NULL, retry_count = 0, last_error_code = NULL, updated_at = NOW() 
+             WHERE id = $1`,
+            [student.id]
+          );
+          resetCount++;
+        }
+      }
+
+      return reply.send({
+        success: true,
+        requeuedCount,
+        resetCount,
+        message: `Đã nạp lại ${requeuedCount} học sinh vào hàng đợi xử lý ngay${resetCount > 0 ? `, hoàn trả ${resetCount} học sinh không còn ảnh về empty` : ''}.`,
+      });
+    });
+
     // 5. GET /api/admin/students
     protectedRoutes.get('/students', async (req, reply) => {
       const query = req.query as {
@@ -477,6 +578,80 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({
         success: true,
         message: `Đã xóa học sinh ${student.name} thành công`,
+      });
+    });
+
+    // 7.3. POST /api/admin/students/:id/retry (Thử lại đồng bộ từ file ảnh đã lưu trên server)
+    protectedRoutes.post('/students/:id/retry', async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const studentId = Number(id);
+      const student = await studentRepo.findById(studentId);
+      if (!student) {
+        return reply.status(404).send({ success: false, message: 'Không tìm thấy học sinh' });
+      }
+
+      let hasImage = false;
+      let finalImagePath = student.local_image_path;
+
+      if (finalImagePath) {
+        if (fs.existsSync(finalImagePath)) {
+          hasImage = true;
+        } else {
+          const uploadDir = process.env.UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
+          const candidate = path.join(uploadDir, path.basename(finalImagePath));
+          if (fs.existsSync(candidate)) {
+            hasImage = true;
+            finalImagePath = candidate;
+          }
+        }
+      }
+
+      if (!hasImage || !finalImagePath) {
+        return reply.status(400).send({
+          success: false,
+          message: `Không tìm thấy file ảnh đã lưu của học sinh "${student.name}" trên máy chủ. Vui lòng cho học sinh chụp lại ảnh hoặc nộp ảnh qua PIN lớp.`,
+        });
+      }
+
+      const cls = student.class_id ? await classRepo.findById(student.class_id) : null;
+      const classCode = cls?.code || 'TS1A';
+      const safeIdentifier = student.alias_id || student.qr_token || String(student.id);
+      const isUpdate = Boolean(student.person_id);
+      const actionType = isUpdate ? 'UPDATE_PHOTO' : 'REGISTER';
+      const tempFilename = path.basename(finalImagePath);
+      const jobId = `admin_retry_${safeIdentifier}_${Date.now()}`;
+
+      // Đưa trạng thái về pending
+      await fastify.pg.query(
+        `UPDATE students 
+         SET status = 'pending', retry_count = 0, last_error_code = NULL, last_error_message = NULL, updated_at = NOW() 
+         WHERE id = $1`,
+        [student.id]
+      );
+
+      await registrationQueue.add(
+        isUpdate ? 'override-photo' : 'register',
+        {
+          studentId: student.id,
+          aliasId: student.alias_id || undefined,
+          qrToken: student.qr_token,
+          studentName: student.name,
+          classCode,
+          tempFilename,
+          uploadedAt: Date.now(),
+          actionType,
+          ...(student.person_id ? { personId: student.person_id } : {}),
+        },
+        {
+          jobId,
+          priority: 1, // Ưu tiên xử lý ngay
+          removeOnComplete: true,
+        }
+      );
+
+      return reply.send({
+        success: true,
+        message: `Đã nạp học sinh "${student.name}" vào hàng đợi xử lý ngay (Job ID: ${jobId}).`,
       });
     });
 
@@ -1101,6 +1276,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
             student_ids: { type: 'array', items: { type: 'number' } },
             class_id: { type: 'number' },
             force_update_photo: { type: 'boolean' },
+            force_pending: { type: 'boolean' },
           },
         },
       },
@@ -1109,6 +1285,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         student_ids?: number[];
         class_id?: number;
         force_update_photo?: boolean;
+        force_pending?: boolean;
       };
 
       if (!body.class_id && (!body.student_ids || body.student_ids.length === 0)) {
@@ -1138,6 +1315,10 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // 2. Atomic Conditional Update: Chuyển các bản ghi hợp lệ sang 'pending'
+      const statusClause = body.force_pending
+        ? `AND (status IN ('empty', 'error', 'manual_review', 'conflict_pending_review', 'success', 'synced') OR (status = 'pending' AND updated_at < NOW() - INTERVAL '30 seconds'))`
+        : `AND status IN ('empty', 'error', 'manual_review', 'conflict_pending_review', 'success', 'synced')`;
+
       const updateResult = await fastify.pg.query<{
         id: number;
         class_id: number | null;
@@ -1148,7 +1329,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         `UPDATE students
          SET status = 'pending', updated_at = NOW()
          WHERE id = ANY($1)
-           AND status IN ('empty', 'error', 'manual_review', 'conflict_pending_review', 'success', 'synced')
+           ${statusClause}
          RETURNING id, class_id, name, alias_id, person_id`,
         [targetStudentIds]
       );

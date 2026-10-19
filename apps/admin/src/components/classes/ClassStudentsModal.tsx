@@ -16,6 +16,8 @@ import {
   CheckCircle2,
   Copy,
   AlertTriangle,
+  Zap,
+  Play,
 } from 'lucide-react';
 
 export interface ClassItem {
@@ -97,6 +99,8 @@ export const ClassStudentsModal: React.FC<ClassStudentsModalProps> = ({
 
   // Action feedback
   const [bannerMessage, setBannerMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isRequeuing, setIsRequeuing] = useState(false);
+  const [retryingStudentId, setRetryingStudentId] = useState<number | null>(null);
 
   const fetchStudents = async () => {
     if (!classItem) return;
@@ -269,6 +273,47 @@ export const ClassStudentsModal: React.FC<ClassStudentsModalProps> = ({
     }
   };
 
+  const handleRequeuePending = async () => {
+    if (!classItem) return;
+    setIsRequeuing(true);
+    try {
+      const res = await apiClient.post<{
+        success: boolean;
+        message: string;
+        requeuedCount: number;
+        resetCount: number;
+      }>(`/classes/${classItem.id}/requeue-pending`);
+
+      setBannerMessage({
+        type: 'success',
+        text: res.message || 'Đã nạp lại các học sinh pending vào hàng đợi xử lý ngay.',
+      });
+      await fetchStudents();
+      onClassUpdated?.();
+    } catch (err: any) {
+      alert(err.message || 'Không thể nạp lại hàng đợi');
+    } finally {
+      setIsRequeuing(false);
+    }
+  };
+
+  const handleRetry = async (student: ClassStudentItem) => {
+    setRetryingStudentId(student.id);
+    try {
+      const res = await apiClient.post<{ success: boolean; message: string }>(`/students/${student.id}/retry`);
+      setBannerMessage({
+        type: 'success',
+        text: res.message || `Đã nạp học sinh "${student.name}" vào hàng đợi xử lý ngay.`,
+      });
+      await fetchStudents();
+      onClassUpdated?.();
+    } catch (err: any) {
+      alert(err.message || 'Không thể thử lại học sinh này');
+    } finally {
+      setRetryingStudentId(null);
+    }
+  };
+
   const filteredStudents = useMemo(() => {
     if (!search.trim()) return students;
     const q = search.toLowerCase();
@@ -358,6 +403,26 @@ export const ClassStudentsModal: React.FC<ClassStudentsModalProps> = ({
               <span className="text-xs font-bold text-emerald-600">{stats.pctSuccess}%</span>
             </div>
           </div>
+
+          {/* Action Banner for Stuck Pending Students */}
+          {stats.pending > 0 && (
+            <div className="mb-3 flex items-center justify-between rounded-xl bg-amber-50 border border-amber-200 px-4 py-2.5 text-xs text-amber-900 shadow-sm">
+              <div className="flex items-center gap-2">
+                <span className="flex h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse" />
+                <span>
+                  Phát hiện <strong>{stats.pending}</strong> học sinh đang ở trạng thái chờ (pending).
+                </span>
+              </div>
+              <button
+                onClick={handleRequeuePending}
+                disabled={isRequeuing}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold px-3 py-1.5 shadow-sm transition disabled:opacity-50"
+              >
+                <Zap className="h-3.5 w-3.5" />
+                <span>{isRequeuing ? 'Đang nạp lại...' : 'Xử lý ngay toàn bộ'}</span>
+              </button>
+            </div>
+          )}
 
           {/* Global Alert Banner */}
           {bannerMessage && (
@@ -554,6 +619,17 @@ export const ClassStudentsModal: React.FC<ClassStudentsModalProps> = ({
                             {/* Actions */}
                             <td className="px-3 py-2 text-right">
                               <div className="flex items-center justify-end gap-1">
+                                {(s.status === 'pending' || s.status === 'manual_review' || s.status === 'error') && (
+                                  <button
+                                    onClick={() => handleRetry(s)}
+                                    disabled={retryingStudentId === s.id}
+                                    className="rounded p-1 text-amber-600 hover:bg-amber-100 hover:text-amber-800 disabled:opacity-50"
+                                    title="Thử lại / Đồng bộ ngay từ ảnh trên server"
+                                  >
+                                    <Play className={`h-3.5 w-3.5 fill-current ${retryingStudentId === s.id ? 'animate-spin' : ''}`} />
+                                  </button>
+                                )}
+
                                 <button
                                   onClick={() => handleStartEdit(s)}
                                   className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-blue-600"
