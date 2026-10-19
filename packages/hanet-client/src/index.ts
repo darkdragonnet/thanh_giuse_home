@@ -64,21 +64,54 @@ export class HanetClient {
     const endpointUrl = `${this.baseUrl}${path}`;
     const signal = AbortSignal.timeout(this.timeoutMs);
 
+    let response: Response;
     try {
-      const response = await fetch(endpointUrl, {
+      response = await fetch(endpointUrl, {
         method: 'POST',
         body,
         signal
       });
+    } catch (networkErr: any) {
+      // Chỉ đếm lỗi Circuit Breaker khi rớt mạng thực sự, DNS error, hoặc Timeout
+      this.circuitBreaker.recordFailure();
 
-      if (!response.ok) {
-        throw new Error(`HTTP Error: ${response.status} ${response.statusText}`);
+      const isTimeout = networkErr?.name === 'TimeoutError';
+      const evaluation: HanetErrorEvaluation = evaluateHanetError(
+        -503,
+        isTimeout ? 'REQUEST_TIMEOUT_120S' : (networkErr?.message || 'NETWORK_CONNECTION_ERROR')
+      );
+
+      return {
+        success: false,
+        evaluation,
+        error: networkErr as Error
+      };
+    }
+
+    // Đọc an toàn text từ response một lần duy nhất (tránh lỗi stream already read)
+    let rawText = '';
+    try {
+      rawText = await response.text();
+    } catch {
+      rawText = '';
+    }
+
+    const safeMessage = (rawText || response.statusText || '').slice(0, 1000);
+
+    let json: HanetApiResponse<T> | null = null;
+    try {
+      if (rawText) {
+        json = JSON.parse(rawText) as HanetApiResponse<T>;
       }
+    } catch {
+      json = null;
+    }
 
-      const json = (await response.json()) as HanetApiResponse<T>;
-      const evaluation = evaluateHanetError(json.returnCode, json.returnMessage);
+    // 1. Nếu response chứa JSON có returnCode hợp lệ từ HANET Cloud
+    if (json && typeof json.returnCode === 'number') {
+      const evaluation = evaluateHanetError(json.returnCode, json.returnMessage || safeMessage);
 
-      // Nếu lỗi hệ thống -503: ghi nhận vào circuit breaker
+      // Chỉ ghi nhận failure cho Circuit Breaker khi chính máy chủ HANET báo quá tải -503
       if (evaluation.action === 'RETRY_LATER' && json.returnCode === -503) {
         this.circuitBreaker.recordFailure();
       } else {
@@ -90,22 +123,63 @@ export class HanetClient {
         rawResponse: json,
         evaluation
       };
-    } catch (err) {
-      // Bắt các lỗi rớt mạng hoặc timeout
+    }
+
+    // 2. Nếu không có returnCode JSON, phân loại theo HTTP status code
+    if (!response.ok) {
+      // A. Lỗi 401 hoặc token: Không kích hoạt Circuit Breaker
+      if (response.status === 401) {
+        const evaluation = evaluateHanetError(-401, safeMessage || 'Unauthorized');
+        return {
+          success: false,
+          rawResponse: json ?? undefined,
+          evaluation,
+          error: new Error(`HTTP 401 Unauthorized: ${safeMessage}`)
+        };
+      }
+
+      // B. Lỗi 429 Rate Limit: Không kích hoạt Circuit Breaker, trả về RETRY_LATER backoff
+      if (response.status === 429) {
+        const evaluation = evaluateHanetError(-429, safeMessage || 'Rate Limit Exceeded');
+        return {
+          success: false,
+          rawResponse: json ?? undefined,
+          evaluation,
+          error: new Error(`HTTP 429 Too Many Requests: ${safeMessage}`)
+        };
+      }
+
+      // C. Lỗi 4xx Client Error khác (400, 403, 404, 422): Tuyệt đối KHÔNG đếm Circuit Breaker
+      if (response.status >= 400 && response.status < 500) {
+        console.warn(`[HANET CLIENT 4XX] Path: ${path} | Status: ${response.status} | Body: ${safeMessage}`);
+        const evaluation = evaluateHanetError(-400, safeMessage || `HTTP Error: ${response.status} ${response.statusText}`);
+        return {
+          success: false,
+          rawResponse: json ?? undefined,
+          evaluation,
+          error: new Error(`HTTP Error: ${response.status} ${response.statusText} - ${safeMessage}`)
+        };
+      }
+
+      // D. Lỗi 5xx Server Error: Ghi nhận vào Circuit Breaker
       this.circuitBreaker.recordFailure();
-
-      const isTimeout = (err as Error).name === 'TimeoutError';
-      const evaluation: HanetErrorEvaluation = evaluateHanetError(
-        -503,
-        isTimeout ? 'REQUEST_TIMEOUT_120S' : (err as Error).message
-      );
-
+      const evaluation = evaluateHanetError(-503, safeMessage || `HTTP Error: ${response.status} ${response.statusText}`);
       return {
         success: false,
+        rawResponse: json ?? undefined,
         evaluation,
-        error: err as Error
+        error: new Error(`HTTP Error: ${response.status} ${response.statusText}`)
       };
     }
+
+    // 3. Response HTTP 200 nhưng body rỗng hoặc text thường
+    this.circuitBreaker.recordSuccess();
+    const evaluation = evaluateHanetError(1, 'SUCCESS');
+    return {
+      success: true,
+      rawResponse: json ?? undefined,
+      evaluation
+    };
   }
 
   /**

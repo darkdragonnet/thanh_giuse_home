@@ -35,10 +35,27 @@ export const HANET_ERROR_MAP: Record<number, Omit<HanetErrorEvaluation, 'returnC
     suggestedBackoffMs: 5000,
     userFacingMessage: 'Phiên xác thực đã hết hạn, vui lòng thử lại sau.'
   },
+  '-400': {
+    action: 'QUARANTINE_MANUAL',
+    isRetryable: false,
+    userFacingMessage: 'Dữ liệu hoặc ảnh gửi lên HANET Cloud không hợp lệ, chuyển sang diện kiểm tra thủ công.'
+  },
+  '-401': {
+    action: 'REFRESH_TOKEN',
+    isRetryable: true,
+    suggestedBackoffMs: 5000,
+    userFacingMessage: 'Phiên xác thực đã hết hạn, vui lòng thử lại sau.'
+  },
   '-404': {
     action: 'FATAL_INVALID_DATA',
     isRetryable: false,
     userFacingMessage: 'Đường dẫn hoặc phương thức gọi API không được hỗ trợ.'
+  },
+  '-429': {
+    action: 'RETRY_LATER',
+    isRetryable: true,
+    suggestedBackoffMs: 15_000,
+    userFacingMessage: 'Vượt quá tần suất yêu cầu tới máy chủ nhận diện, đang thử lại sau giây lát.'
   },
   '-503': {
     action: 'RETRY_LATER',

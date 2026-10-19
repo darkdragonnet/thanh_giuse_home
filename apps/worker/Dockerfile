@@ -5,6 +5,7 @@ WORKDIR /app
 COPY package*.json tsconfig*.json ./
 COPY packages/ ./packages/
 COPY apps/worker/ ./apps/worker/
+COPY scripts/ ./scripts/
 
 RUN npm ci
 RUN npm run build:packages && npm run build --workspace=@thanh-giuse/worker
@@ -20,5 +21,6 @@ COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/apps/worker ./apps/worker
+COPY --from=builder /app/scripts ./scripts
 
 CMD ["node", "apps/worker/dist/worker.js"]

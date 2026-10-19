@@ -123,8 +123,10 @@ export async function processRegistrationJob(
       filename: processed.filename,
     });
   } else {
-    // Đăng ký mới theo URL (ADR-002)
-    const imageUrl = `${workerEnv.staticBaseUrl}/${processed.filename}`;
+    // Đăng ký mới theo URL (ADR-002) - Chuẩn hóa ghép URL an toàn chống double slash
+    const baseUrl = (workerEnv.staticBaseUrl || '').replace(/\/+$/, '');
+    const cleanFilename = processed.filename.replace(/^\/+/, '');
+    const imageUrl = `${baseUrl}/${cleanFilename}`;
     console.log(`[HANET DISPATCH] Đăng ký khuôn mặt qua URL: ${imageUrl} (aliasID: ${aliasId})`);
     hanetResult = await hanetClient.registerByUrl({
       aliasID: aliasId,
@@ -136,7 +138,7 @@ export async function processRegistrationJob(
 
   // 4. Đánh giá kết quả từ HANET
   const { evaluation, rawResponse } = hanetResult;
-  const returnCode = rawResponse?.returnCode ?? (hanetResult.error ? -503 : -1);
+  const returnCode = rawResponse?.returnCode ?? evaluation?.returnCode ?? (hanetResult.error ? -503 : -1);
   console.log(`[HANET RESPONSE] ReturnCode: ${returnCode} | Action: ${evaluation.action}`);
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -267,14 +269,34 @@ export async function processRegistrationJob(
   const currentRetries = currentStudent?.retry_count ?? 0;
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // TẦNG 0: NGOẠI LỆ RATE LIMIT (-429 / HTTP 429)
+  // Chiến lược: Delay ngắn 15s để giãn cách tần suất, không nhảy Circuit Breaker, không delay 300s
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (returnCode === -429) {
+    console.warn(`[RATE LIMIT 429] Học sinh ${aliasId}: HANET Rate Limit. Tạm dừng 15s để giãn cách...`);
+    await new Promise((r) => setTimeout(r, 15_000));
+    await logRepo.recordLog({
+      alias_id: aliasId,
+      class_id: currentStudent?.class_id,
+      action: actionType,
+      result_code: 'RATE_LIMITED_429',
+      result_message: `[RATE_LIMIT_429] Đã tạm dừng 15s giãn cách tần suất gọi API HANET Cloud.`,
+    });
+    throw new Error('HANET_RATE_LIMITED_15S');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // TẦNG 1: LỖI CƠ SỞ HẠ TẦNG / QUÁ TẢI (-503, TIMEOUT, CIRCUIT BREAKER, NETWORK)
   // Chiến lược: Retry tuần tự + Fixed Backoff 300s (Giữ nguyên trạng thái pending, không drop job)
   // ═══════════════════════════════════════════════════════════════════════════
   if (
-    evaluation.action === 'RETRY_LATER' ||
-    returnCode === -503 ||
-    returnCode === -909 ||
-    hanetResult.error?.name === 'TimeoutError'
+    (evaluation.action === 'RETRY_LATER' ||
+      returnCode === -503 ||
+      returnCode === -909 ||
+      hanetResult.error?.name === 'TimeoutError') &&
+    returnCode !== -400 &&
+    returnCode !== -401 &&
+    returnCode !== -429
   ) {
     // Giữ nguyên trạng thái 'pending', tăng retry_count để theo dõi
     await studentRepo.recordRetryAttempt(
@@ -358,11 +380,11 @@ export async function processRegistrationJob(
     );
   }
 
-  if (evaluation.action === 'REFRESH_TOKEN' || returnCode === -103) {
+  if (evaluation.action === 'REFRESH_TOKEN' || returnCode === -103 || returnCode === -401) {
     // 1. Tạm dừng queue/worker xử lý tiếp để tránh lãng phí request và spam lỗi
     if (pauseWorker) {
       console.error(
-        '\x1b[41m\x1b[37m[CRITICAL INCIDENT] HANET Token đã hết hạn (-103)! Kích hoạt tạm dừng Queue Worker.\x1b[0m'
+        `\x1b[41m\x1b[37m[CRITICAL INCIDENT] HANET Token đã hết hạn (${returnCode})! Kích hoạt tạm dừng Queue Worker.\x1b[0m`
       );
       await pauseWorker();
     }
@@ -379,26 +401,26 @@ export async function processRegistrationJob(
     }
 
     // 3. Ghi log lỗi vào bảng logs với action SYSTEM_TOKEN_EXPIRED
-    await studentRepo.recordRetryAttempt(studentId, '-103', 'Access token hết hạn');
+    await studentRepo.recordRetryAttempt(studentId, String(returnCode), 'Access token hết hạn');
     await logRepo.recordLog({
       alias_id: aliasId,
       class_id: currentStudent?.class_id,
       action: 'SYSTEM_TOKEN_EXPIRED',
       result_code: 'CRITICAL_TOKEN_EXPIRED',
-      result_message: `[SYSTEM_TOKEN_EXPIRED] Mã lỗi -103 (ACCESS_TOKEN_EXPIRE): Access Token của HANET đã hết hạn. Đã kích hoạt Kill Switch bảo trì toàn hệ thống và tạm dừng hàng đợi. Hướng dẫn vận hành: Admin cập nhật HANET_ACCESS_TOKEN mới trong .env trên VPS và restart qua: docker compose restart api-server queue-worker`,
+      result_message: `[SYSTEM_TOKEN_EXPIRED] Mã lỗi ${returnCode} (ACCESS_TOKEN_EXPIRE): Access Token của HANET đã hết hạn. Đã kích hoạt Kill Switch bảo trì toàn hệ thống và tạm dừng hàng đợi. Hướng dẫn vận hành: Admin cập nhật HANET_ACCESS_TOKEN mới trong .env trên VPS và restart qua: docker compose restart api-server queue-worker`,
     });
 
     // 4. Phát cảnh báo khẩn cấp (Emergency Alert) tới Admin Dashboard
     console.error(
-      '\n\x1b[41m\x1b[37m[EMERGENCY ALERT] SỰ CỐ HỆ THỐNG NGHIÊM TRỌNG (-103): HANET Access Token đã hết hạn! Đã kích hoạt Kill Switch toàn hệ thống. Hướng dẫn vận hành: Admin cập nhật HANET_ACCESS_TOKEN trong .env trên VPS và restart dịch vụ qua: docker compose restart api-server queue-worker\x1b[0m\n'
+      `\n\x1b[41m\x1b[37m[EMERGENCY ALERT] SỰ CỐ HỆ THỐNG NGHIÊM TRỌNG (${returnCode}): HANET Access Token đã hết hạn! Đã kích hoạt Kill Switch toàn hệ thống. Hướng dẫn vận hành: Admin cập nhật HANET_ACCESS_TOKEN trong .env trên VPS và restart dịch vụ qua: docker compose restart api-server queue-worker\x1b[0m\n`
     );
     if (redisClient) {
       await redisClient.publish(
         'admin:alerts',
         JSON.stringify({
           type: 'SYSTEM_TOKEN_EXPIRED',
-          code: -103,
-          message: 'HANET Access Token expired (-103). Hệ thống đã tự động bật Kill Switch.',
+          code: returnCode,
+          message: `HANET Access Token expired (${returnCode}). Hệ thống đã tự động bật Kill Switch.`,
           timestamp: new Date().toISOString(),
         })
       );
@@ -408,7 +430,7 @@ export async function processRegistrationJob(
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // TẦNG 2: LỖI DỮ LIỆU / AI EDGE CASES (-9006 ẢNH MỜ, -9007 TRÙNG MẶT) HOẶC attemptsMade >= 3
+  // TẦNG 2: LỖI DỮ LIỆU / AI EDGE CASES (-400, -9006 ẢNH MỜ, -9007 TRÙNG MẶT) HOẶC attemptsMade >= 3
   // Chiến lược: Fast Isolation -> Chuyển thẳng sang manual_review, giải phóng Worker
   // Đặc biệt (Luồng 2 Self-Service): Nếu đang ở status = 'success' mà đổi ảnh mới bị lỗi (-9006),
   // giữ nguyên status = 'success', person_id và face_url cũ để học sinh vẫn điểm danh bình thường!
@@ -417,12 +439,18 @@ export async function processRegistrationJob(
 
   if (
     evaluation.action === 'QUARANTINE_MANUAL' ||
+    evaluation.action === 'FATAL_INVALID_DATA' ||
+    returnCode === -400 ||
+    returnCode === -1 ||
+    returnCode === -404 ||
     returnCode === -9006 ||
     returnCode === -9007 ||
     returnCode === -9002 ||
     isExceededRetries
   ) {
     const errorCode = String(returnCode !== 1 ? returnCode : (isExceededRetries ? 'MAX_RETRIES' : '-9006'));
+    const safeDetailMsg = (evaluation.returnMessage || '').slice(0, 1000);
+    const safeUserMsg = (evaluation.userFacingMessage || 'Cần kiểm tra thủ công').slice(0, 500);
 
     if (
       actionType === 'UPDATE_PHOTO' &&
@@ -432,7 +460,7 @@ export async function processRegistrationJob(
       await studentRepo.markSelfServiceUpdateFailure(
         studentId,
         errorCode,
-        evaluation.userFacingMessage
+        safeUserMsg
       );
       await logRepo.recordLog({
         student_id: studentId,
@@ -440,12 +468,12 @@ export async function processRegistrationJob(
         class_id: currentStudent.class_id,
         action: 'UPDATE_PHOTO_FAILED',
         result_code: errorCode,
-        result_message: `[SELF_SERVICE_PRESERVED] Ảnh cập nhật mới bị lỗi (${errorCode}: ${evaluation.userFacingMessage}). Đã giữ nguyên status='success' và ảnh cũ.`,
+        result_message: `[SELF_SERVICE_PRESERVED] Ảnh cập nhật mới bị lỗi (${errorCode}: ${safeUserMsg}). Đã giữ nguyên status='success' và ảnh cũ.`,
       });
       return { success: false, quarantined: true };
     }
 
-    await studentRepo.markFailure(studentId, 'manual_review', errorCode, evaluation.userFacingMessage);
+    await studentRepo.markFailure(studentId, 'manual_review', errorCode, safeUserMsg);
 
     await logRepo.recordLog({
       student_id: studentId,
@@ -453,12 +481,13 @@ export async function processRegistrationJob(
       class_id: currentStudent?.class_id,
       action: actionType,
       result_code: 'MANUAL_REVIEW',
-      result_message: `[FAST_ISOLATION] Cách ly sang manual_review (${errorCode}): ${evaluation.returnMessage} (${evaluation.userFacingMessage}). Giữ ảnh gốc tại disk, gỡ job khỏi queue để thông luồng.`,
+      result_message: `[FAST_ISOLATION] Cách ly sang manual_review (${errorCode}): ${safeDetailMsg} (${safeUserMsg}). Bảo toàn ảnh tại disk, gỡ job khỏi queue để thông luồng.`,
     });
 
     console.warn(
       `[FAST ISOLATION] Học sinh ${rawJobAliasId || aliasId} (${studentName}) chuyển sang status="manual_review" (Mã: ${errorCode})`
     );
+    // BẢO TOÀN ẢNH: Không xóa inputImagePath và processed.outputPath
     // Hoàn thành job mà không ném lỗi -> BullMQ gỡ job, Worker lập tức xử lý học sinh tiếp theo
     return { success: false, quarantined: true };
   }
