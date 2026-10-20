@@ -51,6 +51,39 @@ function sanitizeStudentName(rawName: string): string {
     .replace(/\s+/g, ' ');
 }
 
+function findStudentImageFile(localPath: string | null): string | null {
+  if (!localPath) return null;
+  const filename = path.basename(localPath);
+  const candidates = [
+    localPath,
+    path.join('/app/uploads', filename),
+    path.join('/app/uploads/tmp-faces', filename),
+    path.resolve(process.cwd(), 'uploads', filename),
+    path.resolve(process.cwd(), 'uploads/tmp-faces', filename),
+    process.env.UPLOAD_DIR ? path.join(process.env.UPLOAD_DIR, filename) : null,
+    process.env.UPLOAD_DIR ? path.join(process.env.UPLOAD_DIR, 'tmp-faces', filename) : null,
+  ].filter(Boolean) as string[];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      const uploadDir =
+        process.env.UPLOAD_DIR ||
+        (fs.existsSync('/app/uploads') ? '/app/uploads' : path.resolve(process.cwd(), 'uploads'));
+      const mainPath = path.join(uploadDir, filename);
+      if (candidate !== mainPath && !fs.existsSync(mainPath)) {
+        try {
+          if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+          fs.copyFileSync(candidate, mainPath);
+        } catch {
+          // ignore
+        }
+      }
+      return candidate;
+    }
+  }
+  return null;
+}
+
 export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   const { classRepo, studentRepo, logRepo, adminRequestRepo, settingsRepo, registrationQueue, redis } = fastify;
 
@@ -349,28 +382,13 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       let resetCount = 0;
 
       for (const student of pendingStudents) {
-        let hasImage = false;
-        let finalImagePath = student.local_image_path;
-
-        if (finalImagePath) {
-          if (fs.existsSync(finalImagePath)) {
-            hasImage = true;
-          } else {
-            const uploadDir = process.env.UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
-            const candidate = path.join(uploadDir, path.basename(finalImagePath));
-            if (fs.existsSync(candidate)) {
-              hasImage = true;
-              finalImagePath = candidate;
-            }
-          }
-        }
-
+        const foundImage = findStudentImageFile(student.local_image_path);
         const safeIdentifier = student.alias_id || student.qr_token || String(student.id);
         const isUpdate = Boolean(student.person_id);
         const actionType = isUpdate ? 'UPDATE_PHOTO' : 'REGISTER';
 
-        if (hasImage && finalImagePath) {
-          const tempFilename = path.basename(finalImagePath);
+        if (foundImage) {
+          const tempFilename = path.basename(foundImage);
           const jobId = `requeue_${safeIdentifier}_${Date.now()}`;
 
           await registrationQueue.add(
@@ -590,23 +608,9 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({ success: false, message: 'Không tìm thấy học sinh' });
       }
 
-      let hasImage = false;
-      let finalImagePath = student.local_image_path;
+      const finalImagePath = findStudentImageFile(student.local_image_path);
 
-      if (finalImagePath) {
-        if (fs.existsSync(finalImagePath)) {
-          hasImage = true;
-        } else {
-          const uploadDir = process.env.UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
-          const candidate = path.join(uploadDir, path.basename(finalImagePath));
-          if (fs.existsSync(candidate)) {
-            hasImage = true;
-            finalImagePath = candidate;
-          }
-        }
-      }
-
-      if (!hasImage || !finalImagePath) {
+      if (!finalImagePath) {
         return reply.status(400).send({
           success: false,
           message: `Không tìm thấy file ảnh đã lưu của học sinh "${student.name}" trên máy chủ. Vui lòng cho học sinh chụp lại ảnh hoặc nộp ảnh qua PIN lớp.`,

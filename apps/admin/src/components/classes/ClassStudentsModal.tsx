@@ -262,7 +262,7 @@ export const ClassStudentsModal: React.FC<ClassStudentsModalProps> = ({
     if (!confirm(`Bạn có chắc chắn muốn đặt lại trạng thái học sinh "${student.name}" về Chưa nộp (empty)?`)) return;
 
     try {
-      await apiClient.post(`/students/${student.id}/reset`);
+      await apiClient.post(`/students/${student.id}/reset`, {});
       setStudents((prev) =>
         prev.map((s) => (s.id === student.id ? { ...s, status: 'empty', local_image_path: null, face_url: null } : s))
       );
@@ -282,7 +282,7 @@ export const ClassStudentsModal: React.FC<ClassStudentsModalProps> = ({
         message: string;
         requeuedCount: number;
         resetCount: number;
-      }>(`/classes/${classItem.id}/requeue-pending`);
+      }>(`/classes/${classItem.id}/requeue-pending`, {});
 
       setBannerMessage({
         type: 'success',
@@ -300,7 +300,7 @@ export const ClassStudentsModal: React.FC<ClassStudentsModalProps> = ({
   const handleRetry = async (student: ClassStudentItem) => {
     setRetryingStudentId(student.id);
     try {
-      const res = await apiClient.post<{ success: boolean; message: string }>(`/students/${student.id}/retry`);
+      const res = await apiClient.post<{ success: boolean; message: string }>(`/students/${student.id}/retry`, {});
       setBannerMessage({
         type: 'success',
         text: res.message || `Đã nạp học sinh "${student.name}" vào hàng đợi xử lý ngay.`,

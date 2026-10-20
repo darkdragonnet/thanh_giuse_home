@@ -39,7 +39,7 @@ class ApiClient {
       'Accept': 'application/json',
     };
 
-    if (!(customConfig.body instanceof FormData)) {
+    if (customConfig.body !== undefined && !(customConfig.body instanceof FormData)) {
       defaultHeaders['Content-Type'] = 'application/json';
     }
 
@@ -76,23 +76,30 @@ class ApiClient {
   }
 
   post<T>(endpoint: string, body?: any) {
+    const finalBody =
+      body instanceof FormData
+        ? body
+        : body !== undefined
+        ? JSON.stringify(body)
+        : JSON.stringify({});
+
     return this.request<T>(endpoint, {
       method: 'POST',
-      body: body instanceof FormData ? body : JSON.stringify(body),
+      body: finalBody,
     });
   }
 
   patch<T>(endpoint: string, body?: any) {
     return this.request<T>(endpoint, {
       method: 'PATCH',
-      body: JSON.stringify(body),
+      body: body !== undefined ? JSON.stringify(body) : JSON.stringify({}),
     });
   }
 
   put<T>(endpoint: string, body?: any) {
     return this.request<T>(endpoint, {
       method: 'PUT',
-      body: JSON.stringify(body),
+      body: body !== undefined ? JSON.stringify(body) : JSON.stringify({}),
     });
   }
 

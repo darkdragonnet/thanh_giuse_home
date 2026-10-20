@@ -1,10 +1,43 @@
 import 'dotenv/config';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, copyFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import { Pool } from 'pg';
 import { fileURLToPath } from 'node:url';
+
+function findStudentImageFile(localPath: string | null): string | null {
+  if (!localPath) return null;
+  const filename = path.basename(localPath);
+  const candidates = [
+    localPath,
+    path.join('/app/uploads', filename),
+    path.join('/app/uploads/tmp-faces', filename),
+    path.resolve(process.cwd(), 'uploads', filename),
+    path.resolve(process.cwd(), 'uploads/tmp-faces', filename),
+    process.env.UPLOAD_DIR ? path.join(process.env.UPLOAD_DIR, filename) : null,
+    process.env.UPLOAD_DIR ? path.join(process.env.UPLOAD_DIR, 'tmp-faces', filename) : null,
+  ].filter(Boolean) as string[];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      const uploadDir =
+        process.env.UPLOAD_DIR ||
+        (existsSync('/app/uploads') ? '/app/uploads' : path.resolve(process.cwd(), 'uploads'));
+      const mainPath = path.join(uploadDir, filename);
+      if (candidate !== mainPath && !existsSync(mainPath)) {
+        try {
+          if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
+          copyFileSync(candidate, mainPath);
+        } catch {
+          // ignore
+        }
+      }
+      return candidate;
+    }
+  }
+  return null;
+}
 
 /**
  * Script Quản Trị: Giải cứu toàn diện hàng đợi BullMQ và các học sinh bị kẹt trạng thái 'pending'
@@ -113,31 +146,14 @@ async function main() {
       let resetCount = 0;
 
       for (const student of pendingStudents) {
-        let hasImage = false;
-        let finalImagePath = student.local_image_path;
-
-        if (finalImagePath) {
-          // Kiểm tra absolute path hoặc relative trong uploadDir
-          if (existsSync(finalImagePath)) {
-            hasImage = true;
-          } else {
-            // Thử tìm trong thư mục uploads thông dụng
-            const uploadDir = process.env.UPLOAD_DIR || path.resolve(process.cwd(), 'uploads');
-            const candidate = path.join(uploadDir, path.basename(finalImagePath));
-            if (existsSync(candidate)) {
-              hasImage = true;
-              finalImagePath = candidate;
-            }
-          }
-        }
-
+        const foundImage = findStudentImageFile(student.local_image_path);
         const safeIdentifier = student.alias_id || student.qr_token || String(student.id);
         const isUpdate = Boolean(student.person_id);
         const actionType = isUpdate ? 'UPDATE_PHOTO' : 'REGISTER';
         const classCode = student.class_code || 'TS1A';
 
-        if (hasImage && finalImagePath) {
-          const tempFilename = path.basename(finalImagePath);
+        if (foundImage) {
+          const tempFilename = path.basename(foundImage);
           const jobId = `recover_${safeIdentifier}_${Date.now()}`;
 
           await registrationQueue.add(

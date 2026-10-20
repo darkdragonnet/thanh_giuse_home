@@ -32,6 +32,21 @@ export const server = Fastify({
   trustProxy: true,
 });
 
+// Chống lỗi FST_ERR_CTP_EMPTY_JSON_BODY khi client gửi header Content-Type application/json nhưng body rỗng
+server.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body: string | Buffer, done) => {
+  const text = typeof body === 'string' ? body : body.toString('utf8');
+  if (!text || text.trim() === '') {
+    done(null, {});
+    return;
+  }
+  try {
+    done(null, JSON.parse(text));
+  } catch (err: any) {
+    err.statusCode = 400;
+    done(err, undefined);
+  }
+});
+
 // 1. Kết nối Hạ tầng Cơ sở Dữ liệu & Redis
 const pool = new Pool({
   connectionString: apiEnv.db.connectionString,
