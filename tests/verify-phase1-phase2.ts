@@ -70,27 +70,29 @@ async function main() {
   }
   console.log('-> PASS: Chặn conflict 409 thành công.');
 
-  console.log('\n[TEST 3] Kiểm tra Redis Sliding Window Rate Limit (5 req / 5 phút):');
-  // Chúng ta đã gửi 2 request. Bây giờ gửi thêm 3 request nữa (tổng 5).
-  for (let i = 3; i <= 5; i++) {
+  console.log('\n[TEST 3] Kiểm tra Redis Sliding Window Rate Limit FR-011 (60 req / 1 phút):');
+  // Đã gửi 2 request ở Test 1 & 2. Gửi tiếp đến request thứ 60.
+  for (let i = 3; i <= 60; i++) {
     const res = await fetch(`${API_BASE}/api/students/2/photo`, {
       method: 'POST',
       body: createFormData(),
     });
-    console.log(`Request #${i} status: ${res.status}`);
+    if (i % 10 === 0 || i === 60) {
+      console.log(`Request #${i} status: ${res.status}`);
+    }
   }
 
-  // Request thứ 6 PHẢI bị chặn với HTTP 429
-  const res6 = await fetch(`${API_BASE}/api/students/2/photo`, {
+  // Request thứ 61 PHẢI bị chặn với HTTP 429
+  const res61 = await fetch(`${API_BASE}/api/students/2/photo`, {
     method: 'POST',
     body: createFormData(),
   });
-  const data6 = (await res6.json()) as any;
-  console.log(`Request #6 (Mong đợi 429) status: ${res6.status}`, data6);
-  if (res6.status !== 429) {
-    throw new Error(`Test 3 Thất bại! Mong đợi 429, nhận được ${res6.status}`);
+  const data61 = (await res61.json()) as any;
+  console.log(`Request #61 (Mong đợi 429) status: ${res61.status}`, data61);
+  if (res61.status !== 429) {
+    throw new Error(`Test 3 Thất bại! Mong đợi 429, nhận được ${res61.status}`);
   }
-  console.log('-> PASS: Rate limit kích hoạt thành công (429 Too Many Requests).');
+  console.log('-> PASS: Rate limit kích hoạt thành công (429 Too Many Requests per FR-011).');
 
   console.log('\n[TEST 4] Kiểm tra Bypass Rate Limit bằng Teacher PIN (x-teacher-pin):');
   const resBypass = await fetch(`${API_BASE}/api/students/2/photo`, {

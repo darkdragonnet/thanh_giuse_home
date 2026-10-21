@@ -16,8 +16,8 @@ description: "Actionable, dependency-ordered tasks for Student Face Registration
 
 - [X] T001 Implement core image validator in `packages/shared-infra/src/validators/image.validator.ts` rejecting payloads >5MB, non-image or corrupted buffers, and sub-detection resolutions (<100x100), while accepting any aspect ratio (Sharp downstream handles 1280x736 cover normalization)
 - [X] T002 [P] Write unit tests in `tests/image-validator.test.ts` to verify and accept image validator rules (>5MB rejected, corrupt bytes rejected, sub-detection rejected, arbitrary aspect ratio accepted)
-- [ ] T003 [P] Create CI verification script `scripts/verify-docker-ram-limits.ts` validating that no service in `docker/docker-compose.yml` exceeds its individual memory limit (`app_proxy`: 128MB, `app_postgres`: 512MB, `app_redis`: 192MB, `app_api`: 512MB, `app_worker`: 768MB) and aggregate sum is ≤ 2,112 MB (REQUIRED GATE: Principle I)
-- [ ] T004 [P] Configure monorepo package scripts, TypeScript build references, and environment configuration in `package.json` and `.env.example`
+- [X] T003 [P] Create CI verification script `scripts/verify-docker-ram-limits.ts` validating that no service in `docker/docker-compose.yml` exceeds its individual memory limit (`app_proxy`: 128MB, `app_postgres`: 512MB, `app_redis`: 192MB, `app_api`: 512MB, `app_worker`: 768MB) and aggregate sum is ≤ 2,112 MB (REQUIRED GATE: Principle I)
+- [X] T004 [P] Configure monorepo package scripts, TypeScript build references, and environment configuration in `package.json` and `.env.example`
 
 **Checkpoint**: Image validator and memory guard verified before proceeding to database and service foundations.
 
@@ -29,11 +29,11 @@ description: "Actionable, dependency-ordered tasks for Student Face Registration
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T005 Initialize and verify database schema, 9-character alias regex constraint `^[A-Za-z]{2}[A-Za-z0-9]{2}_[A-Za-z0-9]{4}$`, and default system settings (`registration_enabled='true'`, `hanet_sync_rate_limit='1'`) in `docker/postgres/init.sql`
-- [ ] T006 [P] Write unit test in `tests/worker-concurrency.test.ts` asserting BullMQ worker initialization option `worker.opts.concurrency === 1` and process heap bound `--max-old-space-size=512` (REQUIRED GATE: Principle II)
-- [ ] T007 [P] Write unit test in `tests/sync-rate-limiter.test.ts` asserting BullMQ rate limiter pacing enforcing `hanet_sync_rate_limit = 1 req/phút` (delay of 60,000 ms between jobs)
-- [ ] T008 [P] Write integration test in `tests/selective-rate-limit.test.ts` validating FR-011 selective IP rate limiting (60 req/min/IP ceiling applies strictly to write endpoints `POST /api/students/:id/photo` and teacher PIN verify, whereas read endpoints `GET /api/students/:id/status` and `GET /api/classes` are completely bypassed)
-- [ ] T009 Implement selective IP rate limiter middleware in `apps/api/src/middleware/rateLimiter.ts` enforcing FR-011 selective counting for write routes and bypassing read routes
+- [X] T005 Initialize and verify database schema, 9-character alias regex constraint `^[A-Za-z]{2}[A-Za-z0-9]{2}_[A-Za-z0-9]{4}$`, and default system settings (`registration_enabled='true'`, `hanet_sync_rate_limit='1'`) in `docker/postgres/init.sql`
+- [X] T006 [P] Write unit test in `tests/worker-concurrency.test.ts` asserting BullMQ worker initialization option `worker.opts.concurrency === 1` and process heap bound `--max-old-space-size=512` (REQUIRED GATE: Principle II)
+- [X] T007 [P] Write unit test in `tests/sync-rate-limiter.test.ts` asserting BullMQ rate limiter pacing enforcing `hanet_sync_rate_limit = 1 req/phút` (delay of 60,000 ms between jobs)
+- [X] T008 [P] Write integration test in `tests/selective-rate-limit.test.ts` validating FR-011 selective IP rate limiting (60 req/min/IP ceiling applies strictly to write endpoints `POST /api/students/:id/photo` and teacher PIN verify, whereas read endpoints `GET /api/students/:id/status` and `GET /api/classes` are completely bypassed)
+- [X] T009 Implement selective IP rate limiter middleware in `apps/api/src/middleware/rateLimiter.ts` enforcing FR-011 selective counting for write routes and bypassing read routes
 - [ ] T010 Implement 3-tier error mapping and classification in `packages/error-mapping/src/index.ts` (-503 transient overload with 300s fixed backoff, -9006 data error to manual_review, -9008/-103 critical account alert)
 
 **Checkpoint**: Foundation ready - all constitution baseline gates verified. User story implementation can now begin.

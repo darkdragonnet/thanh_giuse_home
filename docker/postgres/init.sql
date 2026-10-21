@@ -103,7 +103,7 @@ CREATE INDEX IF NOT EXISTS idx_staging_cloud_faces_lookup ON staging_cloud_faces
 CREATE INDEX IF NOT EXISTS idx_sync_conflicts_alias ON sync_conflicts(alias_id);
 
 -- 4. Bảng Nhật ký hoạt động (logs)
-CREATE TABLE logs (
+CREATE TABLE IF NOT EXISTS logs (
     id BIGSERIAL PRIMARY KEY,
     student_id INT REFERENCES students(id) ON DELETE SET NULL,
     alias_id VARCHAR(64),
@@ -115,9 +115,9 @@ CREATE TABLE logs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-CREATE INDEX idx_logs_student_id ON logs(student_id);
-CREATE INDEX idx_logs_alias_id ON logs(alias_id);
-CREATE INDEX idx_logs_created_at ON logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_logs_student_id ON logs(student_id);
+CREATE INDEX IF NOT EXISTS idx_logs_alias_id ON logs(alias_id);
+CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at DESC);
 
 -- 5. Bảng Yêu cầu hỗ trợ Admin (admin_requests)
 DO $$ 
@@ -145,37 +145,28 @@ CREATE INDEX IF NOT EXISTS idx_admin_requests_student_id ON admin_requests(stude
 CREATE INDEX IF NOT EXISTS idx_admin_requests_status ON admin_requests(status);
 CREATE INDEX IF NOT EXISTS idx_admin_requests_alias ON admin_requests(alias_id);
 
--- 6. Bảng Cấu hình hệ thống (settings - Chốt chặn khẩn cấp Kill Switch)
-CREATE TABLE settings (
+-- 6. Bảng Cấu hình hệ thống (settings - Chốt chặn khẩn cấp Kill Switch & Rate Limit)
+CREATE TABLE IF NOT EXISTS settings (
     key VARCHAR(50) PRIMARY KEY,
     value TEXT NOT NULL
 );
 
 -- ==============================================================================
--- NẠP DỮ LIỆU MẪU BAN ĐẦU (SEED DATA KIỂM THỬ)
+-- CẤU HÌNH HỆ THỐNG MẶC ĐỊNH (IDEMPOTENT INITIALIZATION)
 -- ==============================================================================
 
--- Cấu hình toàn cục: Bật tính năng đăng ký
+-- Cấu hình toàn cục: Bật tính năng đăng ký và nhịp đồng bộ HANET Cloud
 INSERT INTO settings (key, value) VALUES
     ('registration_enabled', 'true'),
     ('max_daily_capacity', '1200'),
-    ('maintenance_mode', 'false');
+    ('maintenance_mode', 'false'),
+    ('hanet_sync_rate_limit', '1')
+ON CONFLICT (key) DO NOTHING;
 
--- Khởi tạo 2 Lớp học mẫu
-INSERT INTO classes (code, name, teacher_name, token, is_locked) VALUES
-    ('10A1', 'Lớp 10A1 - Chuyên Toán', 'Thầy Nguyễn Văn An', 'PIN_10A1_SECRET_789', FALSE),
-    ('10A2', 'Lớp 10A2 - Chuyên Lý', 'Cô Trần Thị Bình', 'PIN_10A2_SECRET_456', FALSE);
+-- GHI CHÚ QUAN TRỌNG:
+-- Dữ liệu mẫu (classes, students) đã được tách sang file: docker/postgres/seed-dev.sql
+-- TUYỆT ĐỐI không chèn dữ liệu seed mẫu vào init.sql để bảo vệ an toàn cho CSDL vận hành.
 
--- Khởi tạo 5 Học sinh mẫu (Trạng thái ban đầu: 'empty')
-INSERT INTO students (class_id, name, qr_token, alias_id, status) VALUES
-    (1, 'Nguyễn Hoàng Long', 'qr_10a1_001_a7b2', 'STU_10A1_001_A7B2C', 'empty'),
-    (1, 'Trần Minh Quân', 'qr_10a1_002_d4e5', 'STU_10A1_002_D4E5F', 'empty'),
-    (1, 'Lê Thị Thu Thảo', 'qr_10a1_003_g8h9', 'STU_10A1_003_G8H9J', 'empty'),
-    (2, 'Phạm Đức Trọng', 'qr_10a2_001_k1l2', 'STU_10A2_001_K1L2M', 'empty'),
-    (2, 'Vũ Mai Phương', 'qr_10a2_002_n3p4', 'STU_10A2_002_N3P4Q', 'empty');
-
-SELECT setval('classes_id_seq', COALESCE((SELECT MAX(id) FROM classes), 1));
-SELECT setval('students_id_seq', COALESCE((SELECT MAX(id) FROM students), 1));
 
 -- ==============================================================================
 -- HỆ THỐNG BỎ PHIẾU BAN ĐẠI DIỆN GIA TRƯỞNG (SCHEMA RIÊNG BIỆT: giatruong)

@@ -43,3 +43,4 @@ coverage/
 
 # ═══ Docker ═══
 docker-compose.override.yml
+backups/

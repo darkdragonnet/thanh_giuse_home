@@ -7,12 +7,13 @@ export interface RateLimiterOptions {
   classRepo: ClassRepository;
   studentRepo: StudentRepository;
   adminSecret: string;
-  limit?: number;        // Mặc định: 5 request
-  windowSec?: number;    // Mặc định: 300 giây (5 phút)
+  limit?: number;        // Mặc định: 60 request (FR-011)
+  windowSec?: number;    // Mặc định: 60 giây (1 phút)
 }
 
 /**
  * Redis Sliding Window Rate Limiter sử dụng Sorted Set (ZSET)
+ * Tuân thủ FR-011: 60 req/phút/IP cho các endpoint ghi
  * Hỗ trợ bypass cho Giáo viên (x-teacher-pin) và Admin (Authorization Header)
  */
 export function createRateLimiter(options: RateLimiterOptions) {
@@ -21,8 +22,8 @@ export function createRateLimiter(options: RateLimiterOptions) {
     classRepo,
     studentRepo,
     adminSecret,
-    limit = 5,
-    windowSec = 300,
+    limit = 60,
+    windowSec = 60,
   } = options;
 
   return async (request: FastifyRequest, reply: FastifyReply) => {
@@ -108,7 +109,7 @@ export function createRateLimiter(options: RateLimiterOptions) {
 
       return reply.status(429).send({
         error: 'Too Many Requests',
-        message: `Bạn đã vượt quá giới hạn nộp ảnh (${limit} lần / ${windowSec / 60} phút). Vui lòng thử lại sau.`,
+        message: `Bạn đã vượt quá giới hạn gửi yêu cầu (${limit} lần / ${windowSec} giây). Vui lòng thử lại sau.`,
         retryAfter: retryAfterSec,
       });
     }

@@ -18,7 +18,8 @@
     "build:mock": "npm run build --workspace=apps/hanet-mock",
     "seed:classes": "npm run seed:classes --workspace=@thanh-giuse/shared-infra",
     "migrate:hanet-aliases": "node apps/api/dist/scripts/migrate-cloud-aliases.js",
-    "test": "npm run test --workspaces --if-present",
+    "test": "vitest run tests/*.test.ts tests/registration.spec.ts tests/sync-alias-reconciliation.spec.ts tests/requeue-pending-edge-cases.spec.ts && npm run test --workspaces --if-present",
+    "test:unit": "vitest run tests/*.test.ts",
     "test:mock": "npm run test --workspace=apps/hanet-mock",
     "verify:mock": "cd apps/hanet-mock && bash tests/curl/verify.sh",
     "clean": "find . -name 'dist' -type d -not -path '*/node_modules/*' -exec rm -rf {} + 2>/dev/null; find . -name '*.tsbuildinfo' -not -path '*/node_modules/*' -delete 2>/dev/null; echo 'clean done'"

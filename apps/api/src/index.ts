@@ -81,8 +81,8 @@ const rateLimiter = createRateLimiter({
   classRepo,
   studentRepo,
   adminSecret: apiEnv.jwtSecret,
-  limit: 5,
-  windowSec: 300,
+  limit: 60,
+  windowSec: 60,
 });
 
 // 3. Đăng ký Fastify Plugins

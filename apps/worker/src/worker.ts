@@ -14,6 +14,9 @@ import { workerEnv } from './config.js';
 import { processRegistrationJob } from './processor.js';
 import { handleUpdateAlias } from './processors/update-alias.processor.js';
 import { handleHanetSync2000 } from './processors/hanet-sync.processor.js';
+import { buildWorkerOptions, WORKER_CONCURRENCY } from './workerOptions.js';
+
+export { buildWorkerOptions, WORKER_CONCURRENCY };
 
 // ═══ Khởi tạo hạ tầng qua factory ═══
 const dbPool = createDbPool(workerEnv.db);
@@ -22,6 +25,11 @@ const redisClient = createRedisClient(workerEnv.redis);
 const studentRepo = new StudentRepository(dbPool);
 const logRepo = new LogRepository(dbPool);
 const settingsRepo = new SettingsRepository(dbPool);
+
+// Đọc cấu hình nhịp gọi đám mây HANET từ CSDL settings (mặc định 1 req/phút nếu thiếu)
+const syncRateLimitRaw = await settingsRepo.getSetting('hanet_sync_rate_limit').catch(() => null);
+const hanetSyncRateLimit = syncRateLimitRaw ? parseInt(syncRateLimitRaw, 10) || 1 : 1;
+console.log(`[WORKER CONFIG] HANET Sync Rate Limit: ${hanetSyncRateLimit} req/phút`);
 
 const hanetClient = new HanetClient({
   baseUrl: workerEnv.hanet.baseUrl,
@@ -63,11 +71,7 @@ export const registrationWorker = new Worker(
         return await processRegistrationJob(job as Job<RegistrationJobDataExtended>, context);
     }
   },
-  {
-    connection: redisClient,
-    concurrency: 1,          // RÀNG BUỘC CỐT LÕI — KHÔNG ĐƯỢC TĂNG
-    lockDuration: 120_000,   // 120s — khớp timeout HANET
-  }
+  buildWorkerOptions(redisClient, hanetSyncRateLimit)
 );
 
 registrationWorker.on('completed', (job) => {
