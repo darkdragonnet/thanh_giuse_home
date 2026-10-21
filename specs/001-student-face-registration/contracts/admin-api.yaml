@@ -1,0 +1,126 @@
+openapi: 3.0.3
+info:
+  title: Admin Face Registration Operations API
+  description: OpenAPI specification for administrative operations, including unlocking manual_review student records.
+  version: 1.0.0
+servers:
+  - url: /api/admin
+paths:
+  /students/manual-review:
+    get:
+      summary: Lấy danh sách học sinh đang ở trạng thái rà soát thủ công (manual_review)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Danh sách các hồ sơ học sinh cần Admin can thiệp
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    alias_id:
+                      type: string
+                    name:
+                      type: string
+                    class_code:
+                      type: string
+                    status:
+                      type: string
+                      example: "manual_review"
+                    retry_count:
+                      type: integer
+                    last_error_code:
+                      type: string
+                    last_error_message:
+                      type: string
+                    created_at:
+                      type: string
+                      format: date-time
+        '401':
+          description: Không có quyền quản trị
+
+  /students/{id}/unlock:
+    post:
+      summary: Admin mở khóa hồ sơ rà soát thủ công (manual_review -> empty/error)
+      description: |
+        Hành động đặc quyền của Quản trị viên (Admin) nhằm giải phóng hồ sơ học sinh bị kẹt ở
+        trạng thái manual_review (do lỗi liên tiếp hoặc lỗi khuôn mặt), chuyển trạng thái về
+        'empty' (hoặc 'error') để cho phép học sinh hoặc giáo viên nộp lại ảnh mới qua cổng công khai.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID nội bộ của học sinh
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_status:
+                  type: string
+                  enum: [empty, error]
+                  default: empty
+                  description: Trạng thái đích muốn reset (mặc định là 'empty')
+                note:
+                  type: string
+                  example: "Đã xác nhận với GVCN cho phép học sinh chụp lại ảnh mới"
+      responses:
+        '200':
+          description: Mở khóa thành công
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  student_id:
+                    type: integer
+                  previous_status:
+                    type: string
+                    example: "manual_review"
+                  current_status:
+                    type: string
+                    example: "empty"
+                  message:
+                    type: string
+                    example: "Đã mở khóa hồ sơ thành công. Học sinh có thể tiến hành nộp lại ảnh."
+        '400':
+          description: Hồ sơ không ở trạng thái manual_review nên không thể thực hiện mở khóa
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  statusCode:
+                    type: integer
+                    example: 400
+                  error:
+                    type: string
+                    example: "Bad Request"
+                  message:
+                    type: string
+                    example: "Chỉ có thể mở khóa cho hồ sơ đang ở trạng thái manual_review"
+        '401':
+          description: Không có quyền quản trị hoặc token hết hạn
+        '404':
+          description: Không tìm thấy học sinh với ID tương ứng
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

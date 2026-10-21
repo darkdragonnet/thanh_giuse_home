@@ -1,0 +1,163 @@
+openapi: 3.0.3
+info:
+  title: Student Face Registration API
+  description: REST API for student photo registration, polling status, and teacher authorization.
+  version: 1.0.0
+servers:
+  - url: /api
+paths:
+  /classes:
+    get:
+      summary: Lấy danh sách lớp học mở
+      responses:
+        '200':
+          description: Danh sách các lớp học
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                      example: 1
+                    code:
+                      type: string
+                      example: "10A1"
+                    name:
+                      type: string
+                      example: "Lớp 10A1"
+                    is_locked:
+                      type: boolean
+                      example: false
+
+  /classes/{classId}/students:
+    get:
+      summary: Lấy danh sách học sinh trong lớp
+      parameters:
+        - name: classId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Danh sách học sinh kèm trạng thái
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+                      example: "Nguyễn Văn An"
+                    status:
+                      type: string
+                      enum: [empty, pending, success, error, manual_review]
+                      example: "empty"
+                    qr_token:
+                      type: string
+                      example: "a1b2c3d4e5f6g7h8"
+
+  /students/{id}/photo:
+    post:
+      summary: Nộp ảnh chân dung học sinh (Asynchronous Receipt)
+      description: Tiếp nhận ảnh đã nén qua Canvas, kiểm tra điều kiện nguyên tử, đưa vào hàng đợi BullMQ.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: x-teacher-pin
+          in: header
+          required: false
+          description: Mã PIN lớp của giáo viên để miễn trừ Rate Limit
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - photo
+              properties:
+                photo:
+                  type: string
+                  format: binary
+                  description: File ảnh chân dung (Mục tiêu < 800 KB, tối đa < 1 MB)
+      responses:
+        '200':
+          description: Tiếp nhận thành công vào hàng đợi xử lý ngầm
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  status:
+                    type: string
+                    example: "pending"
+                  message:
+                    type: string
+                    example: "Đã tiếp nhận ảnh vào hàng đợi nền. Hệ thống đang đồng bộ theo nhịp an toàn."
+                  queue_position:
+                    type: integer
+                    example: 12
+                  estimated_wait_minutes:
+                    type: integer
+                    example: 12
+        '403':
+          description: Cổng đăng ký toàn trường hoặc lớp học đã bị khóa
+        '409':
+          description: Xung đột - Hồ sơ đang ở trạng thái pending, success hoặc manual_review
+        '413':
+          description: Kích thước file vượt quá trần kỹ thuật (< 1 MB)
+        '429':
+          description: Vượt quá tần suất gửi (quá 3 lần/15 phút cho học sinh hoặc trần IP 60 req/phút)
+
+  /students/{id}/status:
+    get:
+      summary: Thăm dò trạng thái tiến trình (Short Polling 3s)
+      description: Dùng để cập nhật kết quả xử lý và vị trí hàng đợi mà không làm nặng máy chủ.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Trạng thái hiện tại của học sinh
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  status:
+                    type: string
+                    enum: [empty, pending, success, error, manual_review]
+                  queue_position:
+                    type: integer
+                    nullable: true
+                    example: 5
+                  message:
+                    type: string
+                    example: "Đang xếp hàng vị trí thứ 5 (nhịp đồng bộ 1 em/phút)"
+                  face_url:
+                    type: string
+                    nullable: true
+                  last_error_message:
+                    type: string
+                    nullable: true
