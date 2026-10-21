@@ -101,6 +101,19 @@ await server.register(fastifyStatic, {
   decorateReply: false,
 });
 
+// Phục vụ ảnh tạm (tmp-faces) và ảnh lưu trữ trực tiếp từ Fastify API (Fallback cứu hộ khi proxy bypass)
+await server.register(fastifyStatic, {
+  root: TMP_FACES_DIR,
+  prefix: '/tmp-faces/',
+  decorateReply: false,
+});
+
+await server.register(fastifyStatic, {
+  root: UPLOAD_DIR,
+  prefix: '/uploads/',
+  decorateReply: false,
+});
+
 // Decorate các dịch vụ vào server Fastify
 server.decorate('classRepo', classRepo);
 server.decorate('studentRepo', studentRepo);
