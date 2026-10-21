@@ -11,7 +11,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "seed:classes": "tsx src/seeds/seed-classes.ts",
@@ -19,12 +21,15 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "heic-convert": "^2.1.0",
+    "ioredis": "^5.4.0",
     "pg": "^8.12.0",
-    "ioredis": "^5.4.0"
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
-    "@types/pg": "^8.11.0",
+    "@types/heic-convert": "^2.1.1",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
     "tsx": "^4.16.0",
     "typescript": "^5.5.0"
   }

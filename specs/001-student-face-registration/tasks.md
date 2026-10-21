@@ -14,8 +14,8 @@ description: "Actionable, dependency-ordered tasks for Student Face Registration
 
 **Purpose**: Shared infrastructure and critical early image-validator gate before large subsystem tasks.
 
-- [ ] T001 Implement core image validator in `packages/shared-infra/src/validators/image.validator.ts` rejecting payloads >5MB, non-image or corrupted buffers, and sub-detection resolutions (<100x100), while accepting any aspect ratio (Sharp downstream handles 1280x736 cover normalization)
-- [ ] T002 [P] Write unit tests in `tests/image-validator.test.ts` to verify and accept image validator rules (>5MB rejected, corrupt bytes rejected, sub-detection rejected, arbitrary aspect ratio accepted)
+- [X] T001 Implement core image validator in `packages/shared-infra/src/validators/image.validator.ts` rejecting payloads >5MB, non-image or corrupted buffers, and sub-detection resolutions (<100x100), while accepting any aspect ratio (Sharp downstream handles 1280x736 cover normalization)
+- [X] T002 [P] Write unit tests in `tests/image-validator.test.ts` to verify and accept image validator rules (>5MB rejected, corrupt bytes rejected, sub-detection rejected, arbitrary aspect ratio accepted)
 - [ ] T003 [P] Create CI verification script `scripts/verify-docker-ram-limits.ts` validating that no service in `docker/docker-compose.yml` exceeds its individual memory limit (`app_proxy`: 128MB, `app_postgres`: 512MB, `app_redis`: 192MB, `app_api`: 512MB, `app_worker`: 768MB) and aggregate sum is ≤ 2,112 MB (REQUIRED GATE: Principle I)
 - [ ] T004 [P] Configure monorepo package scripts, TypeScript build references, and environment configuration in `package.json` and `.env.example`
 
