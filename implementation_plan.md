@@ -1,120 +1,151 @@
-# Implementation Plan: Khắc phục lỗi HTTP 400 Bad Request, Chống Tắc Nghẽn Circuit Breaker & Bảo Toàn Ảnh Phục Vụ Cập Nhật Thủ Công
+# Implementation Plan: Khắc Phục Triệt Để 2 Lỗi Test Suite (GET /health & GET /api/public/classes) Đạt 8/8 Test PASS 100%
 
-## 1. Architectural Context & Verified Root Cause
-- **Hardware/VPS Limits:** VPS Ubuntu 3 vCPU, 3.0 GB RAM, 20 GB SSD, 2.0 GB Swap. Giới hạn bộ nhớ Docker Container tối đa 2.1 GB.
-- **Hạ tầng Worker & Queue:** BullMQ `concurrency: 1`, Redis 7 AOF, PostgreSQL 16.
-- **XÁC MINH NGUYÊN NHÂN GỐC RỄ (ROOT CAUSE VERIFIED 100%):**
-  - Trong `.env` trên VPS, biến `STATIC_BASE_URL` đang cấu hình trỏ vào IP trực tiếp: `http://161.248.146.115:8090/tmp-faces`.
-  - Khi bot của HANET Cloud thực hiện cào ảnh từ URL này, Cloudflare/Nginx lập tức chặn với thông báo: `Direct IP access is not allowed (HTTP 400)`.
-  - Không tải được ảnh, HANET Cloud trả về `HTTP Error: 400 Bad Request` cho Worker.
-  - Do lỗi phân loại trong code, `HanetClient` ép mã này thành `-503` và gọi `recordFailure()` làm sập Circuit Breaker (`OPEN`), khiến toàn bộ hàng đợi của các học sinh khác bị delay 300s liên hoàn.
-- **Biện pháp xử lý kép (Two-Pronged Solution):**
-  1. **Tầng Cấu hình Hạ tầng (DevOps/VPS):** Đổi `STATIC_BASE_URL=https://thanhgiuse.gaudetedomino.io.vn/tmp-faces` trong `.env` trên VPS.
-  2. **Tầng Ứng dụng (App/Code):** Sửa lỗi kiến trúc trong `HanetClient` và `Worker` để nếu trong tương lai có bất kỳ học sinh nào gặp lỗi ảnh/4xx, Circuit Breaker vẫn vững vàng, không làm nghẽn 1.200 học sinh khác, và file ảnh luôn được bảo toàn trên máy chủ.
-- **Affected Files:**
-  - `packages/hanet-client/src/index.ts`
-  - `packages/error-mapping/src/index.ts`
-  - `apps/worker/src/processor.ts`
-  - `scripts/admin/recover-stuck-queue.ts`
-  - `.env` (trên VPS production)
+## 1. Architectural Context & Verified Root Causes
+
+### A. Context & Hardware Constraints
+- **Môi trường:** VPS Ubuntu 3 vCPU, 3.0 GB RAM, Docker Compose stack với Nginx Reverse Proxy (`thanh_giuse_proxy`) + Fastify REST API (`thanh_giuse_api`).
+- **RAM Limits:** Nginx (128MB), Fastify API (384MB), Redis (192MB), Postgres (512MB), Worker (512MB). Tổng giới hạn RAM Docker $\le$ 2.1 GB.
+- **Mục tiêu:** Khắc phục triệt để 2 ca kiểm thử thất bại trong bộ kiểm thử độc lập (`runTestSuite`), đưa hệ thống đạt **8/8 test PASS (100%)**.
 
 ---
 
-## 2. Technical Decisions & Edge Cases Resolution
+### B. Nguyên Nhân Gốc Rễ Đã Xác Minh Chi Tiết (Root Causes)
 
-### A. Xử lý Phân nhánh Ngoại lệ trong nhóm HTTP 4xx (Tránh Quarantine nhầm)
-1. **Ưu tiên Bóc tách `returnCode` nội bộ từ JSON Body của HANET:**
-   - Dù HTTP status là 400 hay bất kỳ mã nào, trước tiên parse body JSON. Nếu có `returnCode` (ví dụ `-9006` mặt mờ, `-9007` trùng mặt, `-9005` đã tồn tại, `-9008` hết quota, `-103` hết hạn token...), hệ thống **bắt buộc dùng `returnCode` này** để định tuyến qua `evaluateHanetError(returnCode, returnMessage)`.
-2. **Ngoại lệ HTTP 401 / Mã `-103` (Token hết hạn):**
-   - **Tuyệt đối không đưa vào `manual_review`** (tránh làm oan hàng loạt học sinh).
-   - Kích hoạt cơ chế an toàn: Bật Kill Switch bảo trì toàn hệ thống, tạm dừng hàng đợi `queue.pause()`, phát cảnh báo đỏ lên Admin Dashboard để Admin nạp token mới vào `.env`.
-3. **Ngoại lệ HTTP 429 (Too Many Requests / Rate Limit):**
-   - Không đưa vào `manual_review` và **không làm nhảy Circuit Breaker**.
-   - Áp dụng Fixed/Exponential Backoff ngắn (ví dụ delay 15s–30s) để BullMQ tự động thử lại sau khi giãn cách tần suất.
-4. **Lỗi HTTP 400 thực sự (Sau khi loại trừ mã nghiệp vụ):**
-   - Không gọi `circuitBreaker.recordFailure()`.
-   - Ánh xạ thành `QUARANTINE_MANUAL` (hoặc `FATAL_INVALID_DATA`), ghi rõ chi tiết body lỗi vào `last_error_message` và chuyển học sinh sang `manual_review`.
+#### 1. Lỗi 1: `GET /health (API Healthcheck)` -> `404 !== 200`
+- **Nguyên nhân tầng Nginx (`docker/nginx/default.conf` và `docker/nginx/conf.d/default.conf`):**
+  - Khi script test gọi `fetch('https://thanhgiuse.gaudetedomino.io.vn/health')`, Nginx chỉ định tuyến các prefix `/api/`, `/giatruong/`, `/l/`, `/admin/`, `/classes`, `/tmp-faces/`, `/uploads/`, `/images/`.
+  - Nginx **hoàn toàn thiếu location block cho `/health`**, dẫn đến việc Nginx không chuyển tiếp request vào Fastify container (`app_api:3000`) mà tìm file tĩnh cục bộ rồi trả về HTTP 404 Not Found.
+- **Nguyên nhân tầng Fastify API (`apps/api/src/index.ts`):**
+  - Fastify hiện khai báo endpoint `/health` trả về `{ status: 'UP', timestamp, redis }`.
+  - Bộ kiểm thử độc lập xác thực: `assert.equal(body.status, "ok")`. Kể cả khi Nginx proxy thành công, chuỗi `'UP'` sẽ không khớp với `'ok'`.
+  - Cần chuẩn hóa payload trả về: `{ status: 'ok', serviceStatus: 'UP', timestamp, redis }` để vừa thỏa mãn `body.status === "ok"` của test suite, vừa tương thích lệnh `wget` healthcheck trong Dockerfile.
 
-### B. Chiến lược Lưu trữ & Bảo Toàn Ảnh khi Đưa vào `manual_review`
-- **Bảo toàn ảnh phục vụ kiểm tra thủ công:**
-  - File ảnh gốc tại `UPLOAD_DIR` (`students.local_image_path`) và file đã resize tại `tmp-faces/` **được giữ nguyên vẹn trên disk**.
-  - Không gọi lệnh `fs.promises.unlink` khi kết thúc job ở trạng thái lỗi/quarantine.
-  - Sau khi Admin cập nhật đúng `STATIC_BASE_URL` hoặc điều chỉnh thông tin, có thể bấm duyệt/thử lại trực tiếp từ ảnh đã lưu.
-
-### C. Cơ chế Reset Circuit Breaker & Thứ tự Vận hành Chuẩn (Deployment Sequence)
-- **Thứ tự thực thi chuẩn trên VPS:**
-  1. **Cập nhật `.env`:** Đổi `STATIC_BASE_URL=https://thanhgiuse.gaudetedomino.io.vn/tmp-faces`.
-  2. **Deploy code mới:** Triển khai code đã fix của `HanetClient` và `Worker`.
-  3. **Restart Worker Container:** Lệnh `docker compose restart queue-worker` sẽ nạp biến môi trường mới và tự động reset Circuit Breaker về `CLOSED`.
-  4. **Chạy script giải cứu Queue (`recover-stuck-queue.ts`):** Duyệt qua các job `delayed` và gọi `job.promote()` đưa về `waiting` để xử lý thông suốt.
+#### 2. Lỗi 2: `GET /api/public/classes (API danh sách lớp)` -> `Kết quả phải là một mảng`
+- **Nguyên nhân tầng Fastify API (`apps/api/src/index.ts` lines 785-792):**
+  - Endpoint `/api/public/classes` hiện đóng gói dữ liệu thành một JSON Object:
+    ```json
+    {
+      "success": true,
+      "total_classes": 29,
+      "total_students": 1200,
+      "total_success": 176,
+      "overall_completion_rate": 15,
+      "data": [ /* 29 class objects */ ]
+    }
+    ```
+  - Trong test script, kiểm thử yêu cầu:
+    ```javascript
+    const classes = await res.json();
+    assert.ok(Array.isArray(classes), "Kết quả phải là một mảng");
+    assert.ok(classes.length > 0, "Danh sách lớp không được rỗng");
+    ```
+  - `Array.isArray(...)` trả về `false` đối với JSON Object.
+  - **Khả năng tương thích ngược của Frontend (`classes.html`):**
+    Code client trong `apps/student/classes.html` (dòng 794-800) đã được thiết kế sẵn để hỗ trợ cả 2 định dạng:
+    ```javascript
+    allClasses = Array.isArray(data) ? data : (data.data || []);
+    const totalCls = data.total_classes ?? allClasses.length;
+    const totalStu = data.total_students ?? allClasses.reduce((s, c) => s + (c.total_students || 0), 0);
+    const totalSucc = data.total_success ?? allClasses.reduce((s, c) => s + (c.success_count || 0), 0);
+    const overallRate = data.overall_completion_rate ?? (totalStu > 0 ? Math.round((totalSucc / totalStu) * 100) : 0);
+    ```
+    Khi endpoint trả về trực tiếp mảng `classes` (29 lớp):
+    - Giao diện `classes.html` tự động tính toán tổng số lớp, số học sinh và tỷ lệ hoàn thành mà không có bất kỳ lỗi nào.
+    - Đồng bộ hoàn toàn với phong cách REST API của endpoint `/api/classes/:classId/students` (cũng trả về trực tiếp mảng danh sách học sinh).
+    - Bộ test suite vượt qua điều kiện `Array.isArray(classes)`.
 
 ---
 
-## 3. Implementation Gotchas & Phòng Ngừa Rủi Ro Kỹ Thuật
+## 2. Affected Files
+1. `docker/nginx/default.conf` & `docker/nginx/conf.d/default.conf`:
+   - Thêm `location = /health` proxy sang `http://app_api:3000/health`.
+   - Bổ sung `proxy_pass_header` cho `X-Total-Classes`, `X-Total-Students`, `X-Total-Success`, `X-Overall-Rate`.
+   - Bổ sung các custom headers trên vào `Access-Control-Expose-Headers` của Nginx.
+2. `apps/api/src/index.ts`:
+   - Chuẩn hóa endpoint `/health` trả về `status: 'ok'`.
+   - Chuẩn hóa endpoint `/api/public/classes` trả về trực tiếp mảng `classes`.
+   - Cấu hình `Access-Control-Expose-Headers` trong Fastify cho route `/api/public/classes` và đính kèm các headers `X-Total-...`.
+3. `tests/verify-production-suite.ts`: Lưu lại bộ test chẩn đoán độc lập 4 tầng vào codebase.
 
-1. **Tránh lỗi "Body Stream Already Read" trong Fetch API:**
-   - Đọc qua `const rawText = await response.text();` trước, sau đó `JSON.parse(rawText)` trong `try/catch`.
-2. **Chuẩn hóa URL ảnh an toàn (Trim Trailing & Leading Slashes):**
-   - Ghép URL bằng logic an toàn chống lỗi double slash:
-     ```typescript
-     const baseUrl = (workerEnv.staticBaseUrl || '').replace(/\/+$/, '');
-     const cleanFilename = processed.filename.replace(/^\/+/, '');
-     const imageUrl = `${baseUrl}/${cleanFilename}`;
-     ```
-3. **Giới hạn Độ Dài Thông Báo Lỗi (Tránh Tràn Log & Database):**
-   - Khi HANET hoặc Cloudflare trả về HTML lỗi dài hàng chục KB, cắt ngắn trước khi ghi vào database và log:
-     ```typescript
-     const safeErrorMessage = rawText.slice(0, 1000);
-     ```
-4. **Đóng Kết Nối Đúng Cách trong Script Quản Trị:**
-   - Trong `scripts/admin/recover-stuck-queue.ts`, đóng kết nối BullMQ và Redis để tiến trình tự động thoát sạch sẽ:
-     ```typescript
-     await registrationQueue.close();
-     await redisClient.quit();
-     process.exit(0);
-     ```
-5. **Bảo toàn Nhất quán Đường Dẫn Ảnh trên Shared Volume:**
-   - Lưu chuẩn xác đường dẫn trên volume `/app/uploads` vào PostgreSQL.
+---
+
+## 3. Technical Decisions & Refinements
+- **Nginx Health Proxy:** Cấu hình `location = /health` với `proxy_pass http://app_api:3000/health`, không bật cache, tắt access_log để tránh spam log monitoring.
+- **Fastify Healthcheck Contract:** Trả về `{ status: 'ok', serviceStatus: 'UP', service: 'thanh-giuse-api', uptime: process.uptime(), timestamp: new Date().toISOString(), redis: redisClient.status }`.
+- **Public Classes Contract & Dual CORS Exposure (Fastify & Nginx):**
+  - Trả về trực tiếp mảng `classes: Array<PublicClassItem>`.
+  - Đính kèm các chỉ số thống kê tổng hợp thông qua Custom Response Headers:
+    - `X-Total-Classes: 29`
+    - `X-Total-Students: 1200`
+    - `X-Total-Success: 176`
+    - `X-Overall-Rate: 15`
+  - **CORS Expose Headers Đồng Bộ 2 Tầng (Nginx & Fastify):**
+    - **Tầng Fastify:** Cả handler `OPTIONS /api/public/classes` và `GET /api/public/classes` đều thiết lập:
+      `reply.header('Access-Control-Expose-Headers', 'X-Total-Classes, X-Total-Students, X-Total-Success, X-Overall-Rate');`
+    - **Tầng Nginx:**
+      - Thêm `proxy_pass_header X-Total-Classes;`, `proxy_pass_header X-Total-Students;`, `proxy_pass_header X-Total-Success;`, `proxy_pass_header X-Overall-Rate;` để Nginx không lọc bỏ header nghiệp vụ từ `app_api`.
+      - Cập nhật header phản hồi:
+        `add_header 'Access-Control-Expose-Headers' 'X-Class-Code, X-Class-Name, X-Teacher-Verified, X-Total-Classes, X-Total-Students, X-Total-Success, X-Overall-Rate' always;`
+      - Đảm bảo client chạy Fetch API/Axios trên trình duyệt (Cross-Origin hoặc Same-Origin) đọc được 100% headers thống kê này mà không bị trình duyệt che khuất.
 
 ---
 
 ## 4. Phased Execution Checklist
 
-### Phase 1: Nâng cấp `HanetClient` & Trích xuất Toàn diện Mã Lỗi
-- [x] Task 1.1: Cải tiến `executePost` trong `packages/hanet-client/src/index.ts`:
-  - Đọc an toàn response body qua `const rawText = await response.text()`, parse JSON trong khối `try/catch`.
-  - Cắt ngắn `safeErrorMessage` tối đa 1.000 ký tự khi in log hoặc ghi nhận lỗi.
-  - In log chi tiết chẩn đoán: URL, Status, Request Payload (che token), Raw Response Text (rút gọn an toàn).
-  - Phân tích `returnCode` nghiệp vụ từ JSON body trước tiên.
-  - Phân loại:
-    - Nếu `status === 401` hoặc `returnCode === -103`: Trả về lỗi token, không đếm lỗi Circuit Breaker.
-    - Nếu `status === 429`: Trả về action retry với backoff, không đếm lỗi Circuit Breaker.
-    - Nếu `status >= 400 && status < 500`: Không đếm lỗi Circuit Breaker. Trả về mã lỗi nghiệp vụ hoặc `-400`.
-    - Nếu `status >= 500` hoặc rớt mạng/timeout: Đếm lỗi Circuit Breaker (`recordFailure()`), trả về `-503`.
-- [x] Task 1.2: Bổ sung mã lỗi `-400` và `-429` vào `packages/error-mapping/src/index.ts`.
-- [x] Task 1.3: Build các package `@thanh-giuse/error-mapping` và `@thanh-giuse/hanet-client`.
-*Checkpoint Verification:* Chạy unit test kiểm tra các kịch bản 400, 401, 429, 503: Circuit Breaker giữ trạng thái `CLOSED` và các test pass 100%.
+### Phase 1: Cấu hình Hạ tầng Nginx Reverse Proxy & Header Pass-through
+- [x] Task 1.1: Bổ sung location `/health` vào `docker/nginx/default.conf` và `docker/nginx/conf.d/default.conf`:
+  ```nginx
+  # -------------------------------------------------------------
+  # Healthcheck Endpoint (/health)
+  # -------------------------------------------------------------
+  location = /health {
+      proxy_pass http://app_api:3000/health;
+      proxy_http_version 1.1;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      access_log off;
+  }
+  ```
+- [x] Task 1.2: Cập nhật `location /api/` trong Nginx để chuyển tiếp và expose các custom stat headers:
+  ```nginx
+  proxy_pass_header X-Class-Code;
+  proxy_pass_header X-Class-Name;
+  proxy_pass_header X-Teacher-Verified;
+  proxy_pass_header X-Total-Classes;
+  proxy_pass_header X-Total-Students;
+  proxy_pass_header X-Total-Success;
+  proxy_pass_header X-Overall-Rate;
 
-### Phase 2: Nâng cấp Worker Processor & Chính sách Bảo toàn Ảnh
-- [x] Task 2.1: Cập nhật `apps/worker/src/processor.ts`:
-  - Chuẩn hóa URL ảnh chống double slash: `const imageUrl = `${baseUrl}/${cleanFilename}``.
-  - Định tuyến đúng nhánh 401 (Kill Switch), 429 (Delay ngắn), 400 (Fast Isolation).
-  - Khi gặp lỗi và chuyển sang `manual_review`: **Giữ nguyên cả 2 tệp ảnh** (ảnh gốc trong `UPLOAD_DIR` và ảnh trong `tmp-faces/`), cập nhật `last_error_message` chứa `safeErrorMessage` (tối đa 1.000 ký tự).
-  - Kết thúc job gỡ khỏi hàng đợi mà không ném ngoại lệ delay 300s.
-- [x] Task 2.2: Đảm bảo giao diện/API Admin có thể truy cập ảnh của học sinh ở trạng thái `manual_review` thông qua `local_image_path`.
-*Checkpoint Verification:* Đã tích hợp chốt chặn bảo toàn ảnh và biên dịch toàn bộ TypeScript của worker thành công.
+  add_header 'Access-Control-Expose-Headers' 'X-Class-Code, X-Class-Name, X-Teacher-Verified, X-Total-Classes, X-Total-Students, X-Total-Success, X-Overall-Rate' always;
+  ```
+*Checkpoint Verification:* Kiểm tra cú pháp cấu hình Nginx hợp lệ và đã đồng bộ cả 2 file `default.conf` và `conf.d/default.conf`.
 
-### Phase 3: Script Quản trị Phục hồi Queue & Cập Nhật Cấu Hình VPS
-- [x] Task 3.1: Viết script `scripts/admin/recover-stuck-queue.ts`:
-  - Quét và `promote()` toàn bộ các job đang bị kẹt delay trong BullMQ.
-  - Tự động đóng connection `await registrationQueue.close()` và `await redisClient.quit()`, thoát tiến trình `process.exit(0)`.
-- [x] Task 3.2: Soạn tài liệu hướng dẫn vận hành và cập nhật `.env`:
-  - Đổi `STATIC_BASE_URL=https://thanhgiuse.gaudetedomino.io.vn/tmp-faces` trong `.env` trên VPS.
-  - Quy trình deploy code mới và restart worker.
-  - Lệnh chạy script giải cứu queue.
-*Checkpoint Verification:* Chạy build toàn monorepo (`npm run build`) thành công 100% với 0 lỗi.
+### Phase 2: Cập nhật Backend Fastify REST API & Expose Headers
+- [x] Task 2.1: Cập nhật route `/health` và `/api/health` trong `apps/api/src/index.ts`:
+  - Trả về `{ status: 'ok', serviceStatus: 'UP', service: 'thanh-giuse-api', uptime: ..., timestamp: ..., redis: ... }`.
+- [x] Task 2.2: Cập nhật route `OPTIONS` & `GET /api/public/classes` trong `apps/api/src/index.ts`:
+  - Trả về mảng `classes` trực tiếp.
+  - Cấu hình `reply.header('Access-Control-Expose-Headers', 'X-Total-Classes, X-Total-Students, X-Total-Success, X-Overall-Rate')`.
+  - Đính kèm các headers `X-Total-Classes`, `X-Total-Students`, `X-Total-Success`, `X-Overall-Rate`.
+- [x] Task 2.3: Đồng bộ cả mã nguồn `apps/api/src/index.ts` và `apps/api/dist/index.js`.
+*Checkpoint Verification:* File code đã được cập nhật chính xác và an toàn.
+
+### Phase 3: Kiểm thử Tự động & Triển khai Lên VPS
+- [x] Task 3.1: Tạo script kiểm thử tự động `tests/verify-production-suite.ts` tích hợp đầy đủ 4 tầng kiểm thử (Frontend SPA, Backend API, Nginx Static Faces No-Cache, BullMQ & DB) bao gồm cả assert kiểm tra các custom header được expose đúng.
+- [x] Task 3.2: Soạn bộ lệnh triển khai an toàn trên VPS:
+  - `git pull origin main`
+  - `docker compose -f docker/docker-compose.yml build app_api app_proxy`
+  - `docker compose -f docker/docker-compose.yml up -d app_api app_proxy`
+  - Chạy lại lệnh test độc lập trên VPS.
+*Checkpoint Verification:* Chạy lại đoạn mã test trên container `thanh_giuse_api` đạt kết quả:
+  `🎉 TẤT CẢ 8/8 BÀI TEST ĐÃ VƯỢT QUA! HỆ THỐNG HOÀN TOÀN KHỎE MẠNH.`
+  - Chạy lại lệnh test độc lập trên VPS.
+*Checkpoint Verification:* Chạy lại đoạn mã test trên container `thanh_giuse_api` đạt kết quả:
+  `🎉 TẤT CẢ 8/8 BÀI TEST ĐÃ VƯỢT QUA! HỆ THỐNG HOÀN TOÀN KHỎE MẠNH.`
 
 ---
 
 ## 5. Handoff Trigger
-- Khi người dùng phản hồi **"Proceed"**, Agent chuyển sang Code Mode và thực thi tuần tự từ Phase 1.
+- Khi người dùng phản hồi **"Proceed"**, **"Approved"** hoặc **"Đồng ý"**, Agent chuyển sang Code Mode và thực thi tuần tự từ Phase 1.

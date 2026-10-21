@@ -750,12 +750,20 @@ server.options('/api/public/classes', async (_request, reply) => {
   reply.header('Access-Control-Allow-Origin', '*');
   reply.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
   reply.header('Access-Control-Allow-Headers', 'Content-Type');
+  reply.header(
+    'Access-Control-Expose-Headers',
+    'X-Total-Classes, X-Total-Students, X-Total-Success, X-Overall-Rate'
+  );
   return reply.status(204).send();
 });
 
 server.get('/api/public/classes', async (_request, reply) => {
   reply.header('Access-Control-Allow-Origin', '*');
   reply.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  reply.header(
+    'Access-Control-Expose-Headers',
+    'X-Total-Classes, X-Total-Students, X-Total-Success, X-Overall-Rate'
+  );
   reply.header('Cache-Control', 'public, max-age=5, stale-while-revalidate=10');
 
   try {
@@ -782,14 +790,12 @@ server.get('/api/public/classes', async (_request, reply) => {
     const totalSuccess = classes.reduce((sum, c) => sum + c.success_count, 0);
     const overallRate = totalStudents > 0 ? Math.round((totalSuccess / totalStudents) * 100) : 0;
 
-    return reply.status(200).send({
-      success: true,
-      total_classes: classes.length,
-      total_students: totalStudents,
-      total_success: totalSuccess,
-      overall_completion_rate: overallRate,
-      data: classes,
-    });
+    reply.header('X-Total-Classes', String(classes.length));
+    reply.header('X-Total-Students', String(totalStudents));
+    reply.header('X-Total-Success', String(totalSuccess));
+    reply.header('X-Overall-Rate', String(overallRate));
+
+    return reply.status(200).send(classes);
   } catch (err: any) {
     server.log.error(err, 'Lỗi khi lấy danh sách public classes');
     return reply.status(500).send({
@@ -803,7 +809,10 @@ server.get('/api/public/classes', async (_request, reply) => {
 // 8. API Health Check
 server.get('/health', async (_request, reply) => {
   return reply.status(200).send({
-    status: 'UP',
+    status: 'ok',
+    serviceStatus: 'UP',
+    service: 'thanh-giuse-api',
+    uptime: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
     redis: redisClient.status,
   });
@@ -811,7 +820,10 @@ server.get('/health', async (_request, reply) => {
 
 server.get('/api/health', async (_request, reply) => {
   return reply.status(200).send({
-    status: 'UP',
+    status: 'ok',
+    serviceStatus: 'UP',
+    service: 'thanh-giuse-api',
+    uptime: Math.floor(process.uptime()),
     timestamp: new Date().toISOString(),
     redis: redisClient.status,
   });
