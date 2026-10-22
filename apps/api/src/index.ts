@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import {
   StudentRepository,
+  StudentRecord,
   ClassRepository,
   SettingsRepository,
   LogRepository,
@@ -202,6 +203,51 @@ function applyClassPortalHeaders(
   reply.header('X-Teacher-Verified', isTeacherVerified ? 'true' : 'false');
 }
 
+// DTO cho endpoint danh sách học sinh theo lớp (P0 Privacy Protection)
+export interface PublicStudentDto {
+  id: number;
+  name: string;
+  status: string;
+  alias_id: string | null;
+}
+
+export interface TeacherStudentDto extends PublicStudentDto {
+  is_updating: boolean;
+  last_error_code: string | null;
+  last_error_message: string | null;
+}
+
+/**
+ * Thu hẹp payload danh sách học sinh theo lớp nhằm triệt tiêu nguy cơ lộ dữ liệu nhạy cảm trẻ em:
+ * - Public (mặc định / không PIN / PIN sai): chỉ nhận id, name, status, alias_id.
+ *   TUYỆT ĐỐI KHÔNG chứa: qr_token, face_url, local_image_path, person_id, last_error_code,
+ *   last_error_message, normalized_name, cloud_alias_synced, is_updating, retry_count.
+ * - Teacher (PIN hợp lệ): nhận thêm is_updating, last_error_code, last_error_message phục vụ kiểm tra lỗi.
+ *   TUYỆT ĐỐI VẪN KHÔNG chứa: qr_token, person_id, face_url, local_image_path, retry_count.
+ */
+function mapStudentToRosterDto(
+  student: StudentRecord,
+  isTeacher: boolean
+): PublicStudentDto | TeacherStudentDto {
+  const base: PublicStudentDto = {
+    id: student.id,
+    name: student.name,
+    status: student.status,
+    alias_id: student.alias_id ?? null,
+  };
+
+  if (isTeacher) {
+    return {
+      ...base,
+      is_updating: Boolean(student.is_updating),
+      last_error_code: student.last_error_code ?? null,
+      last_error_message: student.last_error_message ?? null,
+    };
+  }
+
+  return base;
+}
+
 // 4a. Hỗ trợ CORS Preflight OPTIONS cho route danh sách học sinh theo lớp
 server.options<{ Params: { classId: string } }>(
   '/api/classes/:classId/students',
@@ -240,7 +286,8 @@ server.get<{ Params: { classId: string } }>(
         isTeacherVerified
       );
       const students = await studentRepo.getStudentsByClassId(numericClassId);
-      return reply.send(students);
+      const payload = students.map((s) => mapStudentToRosterDto(s, isTeacherVerified));
+      return reply.send(payload);
     }
 
     const classRecord = await classRepo.findByCode(rawParam.toUpperCase());
@@ -258,7 +305,8 @@ server.get<{ Params: { classId: string } }>(
 
     applyClassPortalHeaders(reply, rawParam.toUpperCase(), classRecord.name, isTeacherVerified);
     const students = await studentRepo.getStudentsByClassId(classRecord.id);
-    return reply.send(students);
+    const payload = students.map((s) => mapStudentToRosterDto(s, isTeacherVerified));
+    return reply.send(payload);
   }
 );
 
