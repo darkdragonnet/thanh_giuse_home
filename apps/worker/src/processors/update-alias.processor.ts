@@ -90,7 +90,7 @@ export async function handleUpdateAlias(
     console.warn(`[UPDATE_ALIAS] Bước 1 thất bại với returnCode: ${returnCode}`);
 
     // 1. Mã -103: Hết hạn Token (Hiến pháp Điều 4 Khoản 4)
-    if (returnCode === -103 || evaluation.action === 'REFRESH_TOKEN') {
+    if (returnCode === -103 || returnCode === -401 || (evaluation as any).action === 'SYSTEM_TOKEN_EXPIRED' || (evaluation as any).action === 'REFRESH_TOKEN') {
       if (pauseWorker) await pauseWorker();
       const maintenanceMsg = 'Hệ thống đang tạm khóa để bảo trì kết nối máy chủ';
       if (redisClient) {

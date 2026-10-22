@@ -527,7 +527,22 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     // 7b. POST /api/admin/students/:id/unlock (Chuẩn hóa theo contracts/admin-api.yaml)
     protectedRoutes.post('/students/:id/unlock', async (req, reply) => {
       const { id } = req.params as { id: string };
-      const success = await studentRepo.resetStudentStatus(Number(id));
+      const studentId = Number(id);
+      const student = await studentRepo.findById(studentId);
+      if (!student) {
+        return reply.status(404).send({ success: false, message: 'Không tìm thấy học sinh để mở khóa' });
+      }
+
+      // Micro-fix unlock guard: Chỉ cho phép mở khóa khi hồ sơ đang ở trạng thái manual_review
+      if (student.status !== 'manual_review') {
+        return reply.status(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'Chỉ có thể mở khóa cho hồ sơ đang ở trạng thái manual_review',
+        });
+      }
+
+      const success = await studentRepo.resetStudentStatus(studentId);
       if (!success) {
         return reply.status(404).send({ success: false, message: 'Không tìm thấy học sinh để mở khóa' });
       }
@@ -712,19 +727,101 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ message: 'Tham số enabled (boolean) là bắt buộc' });
       }
 
-      // true: Tiếp tục mở nhận đăng ký; false: Chặn đăng ký (kích hoạt bảo trì)
-      const registrationValue = body.enabled ? 'true' : 'false';
-      const killSwitchRedisValue = body.enabled ? 'false' : 'true';
+      const ip = req.ip || (req.headers['x-forwarded-for'] as string) || null;
 
-      await settingsRepo.set('registration_enabled', registrationValue);
-      await redis.set('setting:kill_switch', killSwitchRedisValue);
+      if (!body.enabled) {
+        // --- NGẮT HÀNG ĐỢI (Kill Switch ON / enabled: false) ---
+        // 1. Tạm dừng hàng đợi ở tầng queue (BullMQ qua Redis, xuyên tiến trình/container)
+        await registrationQueue.pause();
 
-      return reply.send({
-        success: true,
-        message: body.enabled
-          ? 'Hệ thống đã MỞ LẠI cho phép học sinh nộp ảnh.'
-          : 'Hệ thống đã BẬT CHẾ ĐỘ BẢO TRÌ (tạm dừng tiếp nhận ảnh mới).'
-      });
+        // 2. Cập nhật cờ bảo trì Redis và settings PostgreSQL
+        await redis.set('setting:kill_switch', 'true');
+        await settingsRepo.set('registration_enabled', 'false');
+
+        // 3. Ghi Audit Log vào bảng logs
+        await logRepo.recordLog({
+          action: 'KILL_SWITCH_DISABLED',
+          result_code: '1',
+          result_message: 'Admin kích hoạt Kill Switch: Tạm dừng hàng đợi registration_queue và khóa tiếp nhận ảnh mới',
+          ip,
+        });
+
+        return reply.send({
+          success: true,
+          message: 'Hệ thống đã BẬT CHẾ ĐỘ BẢO TRÌ (tạm dừng tiếp nhận ảnh mới và tạm dừng hàng đợi).'
+        });
+      } else {
+        // --- MỞ LẠI HÀNG ĐỢI (Kill Switch OFF / enabled: true) ---
+        // 1. Resume hàng đợi ở tầng queue (BullMQ qua Redis, xuyên tiến trình/container)
+        await registrationQueue.resume();
+
+        // 2. Xóa cờ bảo trì và cờ khóa hệ thống trong Redis
+        await redis.del('system:registration_disabled');
+        await redis.set('setting:kill_switch', 'false');
+        await settingsRepo.set('registration_enabled', 'true');
+
+        // 3. Quét khôi phục: Đưa lại vào hàng đợi mọi học sinh đang pending có last_error_code thuộc nhóm token (-103, -401)
+        const tokenErrorStudentsRes = await fastify.pg.query(
+          `SELECT s.id, s.name, s.alias_id, s.local_image_path, s.person_id, c.code AS class_code
+           FROM students s
+           LEFT JOIN classes c ON s.class_id = c.id
+           WHERE s.status = 'pending' AND s.last_error_code IN ('-103', '-401')`
+        );
+
+        let requeuedCount = 0;
+        for (const s of tokenErrorStudentsRes.rows) {
+          const jobId = `student_${s.alias_id}`;
+          try {
+            const existingJob = await registrationQueue.getJob(jobId);
+            if (existingJob) {
+              const state = await existingJob.getState();
+              // Nếu job đang sống (waiting, active, delayed, prioritized) thì không nạp trùng
+              if (['waiting', 'active', 'delayed', 'prioritized'].includes(state)) {
+                continue;
+              }
+              // Nếu job đã failed hoặc completed cũ thì xóa trước khi nạp lại
+              await existingJob.remove();
+            }
+
+            const filename = s.local_image_path ? path.basename(s.local_image_path) : `${s.alias_id}.jpg`;
+            await registrationQueue.add(
+              'register',
+              {
+                studentId: s.id,
+                aliasId: s.alias_id,
+                studentName: s.name,
+                classCode: s.class_code || 'DEFAULT',
+                tempFilename: filename,
+                uploadedAt: Date.now(),
+                actionType: 'REGISTER',
+                ...(s.person_id ? { personId: s.person_id } : {}),
+              },
+              {
+                jobId,
+                priority: 5,
+                removeOnComplete: true,
+              }
+            );
+            requeuedCount++;
+          } catch (jobErr: any) {
+            fastify.log.warn(`[KillSwitch Recovery] Không thể đưa lại job cho học sinh ${s.alias_id}: ${jobErr?.message}`);
+          }
+        }
+
+        // 4. Ghi Audit Log vào bảng logs
+        await logRepo.recordLog({
+          action: 'KILL_SWITCH_ENABLED',
+          result_code: '1',
+          result_message: `Admin mở lại hệ thống: Khôi phục hàng đợi registration_queue, gỡ cờ khóa và tái lập ${requeuedCount} học sinh lỗi token vào hàng đợi.`,
+          ip,
+        });
+
+        return reply.send({
+          success: true,
+          requeued_count: requeuedCount,
+          message: `Hệ thống đã MỞ LẠI cho phép học sinh nộp ảnh. Đã khôi phục ${requeuedCount} học sinh vào hàng đợi.`
+        });
+      }
     });
 
     // 11. GET /api/admin/logs

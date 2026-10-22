@@ -3,7 +3,7 @@ export type HanetAction =
   | 'RETRY_LATER'         // Lỗi tạm thời phía máy chủ (-503), đẩy lùi để BullMQ thử lại sau 300s
   | 'QUARANTINE_MANUAL'   // Lỗi khuôn mặt (-9006, -9007), cần chuyển sang manual_review
   | 'QUOTA_EXCEEDED'      // Hết hạn mức lưu trữ Face ID (-9008), thông báo Admin
-  | 'REFRESH_TOKEN'       // Token hết hạn (-103), cần cấp lại token
+  | 'SYSTEM_TOKEN_EXPIRED' // Token hết hạn (-103, -401), kích hoạt Kill Switch
   | 'FATAL_INVALID_DATA'  // Dữ liệu đầu vào sai cấu trúc (-1, -9002)
   | 'NOT_FOUND'           // Không tìm thấy thực thể (-5011)
   | 'ALREADY_EXISTS'      // Nhân sự hoặc khuôn mặt đã tồn tại (-9005)
@@ -30,9 +30,8 @@ export const HANET_ERROR_MAP: Record<number, Omit<HanetErrorEvaluation, 'returnC
     userFacingMessage: 'Dữ liệu gửi lên không hợp lệ hoặc thiếu thông tin bắt buộc.'
   },
   '-103': {
-    action: 'REFRESH_TOKEN',
-    isRetryable: true,
-    suggestedBackoffMs: 5000,
+    action: 'SYSTEM_TOKEN_EXPIRED',
+    isRetryable: false,
     userFacingMessage: 'Phiên xác thực đã hết hạn, vui lòng thử lại sau.'
   },
   '-400': {
@@ -41,9 +40,8 @@ export const HANET_ERROR_MAP: Record<number, Omit<HanetErrorEvaluation, 'returnC
     userFacingMessage: 'Dữ liệu hoặc ảnh gửi lên HANET Cloud không hợp lệ, chuyển sang diện kiểm tra thủ công.'
   },
   '-401': {
-    action: 'REFRESH_TOKEN',
-    isRetryable: true,
-    suggestedBackoffMs: 5000,
+    action: 'SYSTEM_TOKEN_EXPIRED',
+    isRetryable: false,
     userFacingMessage: 'Phiên xác thực đã hết hạn, vui lòng thử lại sau.'
   },
   '-404': {

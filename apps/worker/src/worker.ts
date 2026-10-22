@@ -78,9 +78,49 @@ registrationWorker.on('completed', (job) => {
   console.log(`[BULLMQ COMPLETED] Job ${job.id} done`);
 });
 
-registrationWorker.on('failed', (job, err) => {
+export async function handleWorkerFailed(job: Job | undefined, err: Error) {
+  if (!job) return;
   console.error(`[BULLMQ FAILED] Job ${job?.id}: ${err.message}`);
-});
+
+  const maxAttempts = job.opts?.attempts ?? 1;
+  const isExhausted = (job.attemptsMade ?? 0) >= maxAttempts || err.name === 'UnrecoverableError';
+
+  if (isExhausted && job.data?.studentId) {
+    try {
+      const student = await studentRepo.findById(job.data.studentId);
+      const isTokenError = student?.last_error_code === '-103' || student?.last_error_code === '-401';
+      // Chỉ cập nhật manual_review nếu học sinh chưa ở trạng thái kết thúc (không phải success, không phải manual_review)
+      // và KHÔNG phải lỗi token hệ thống (-103, -401)
+      if (student && student.status !== 'success' && student.status !== 'manual_review' && !isTokenError) {
+        const is503 = err.name === 'HanetServiceUnavailableError' || err.message.includes('503') || err.message.includes('UNAVAILABLE');
+        const errorCode = student.last_error_code || (is503 ? '-503' : 'MAX_RETRIES');
+        await studentRepo.markFailure(
+          job.data.studentId,
+          'manual_review',
+          errorCode,
+          `Đã cạn ${job.attemptsMade} lượt thử BullMQ: ${err.message}`
+        );
+        await logRepo.recordLog({
+          student_id: job.data.studentId,
+          alias_id: job.data.aliasId || student.alias_id,
+          class_id: student.class_id,
+          action: 'JOB_EXHAUSTED',
+          result_code: 'MANUAL_REVIEW',
+          result_message: `[JOB_EXHAUSTED] Job ${job.id} cạn số lượt thử (${job.attemptsMade}/${maxAttempts}). Chuyển học sinh sang manual_review. Lỗi: ${err.message}`,
+        });
+        console.warn(
+          `[WORKER LISTENER] Học sinh ${job.data.studentId} (${student.alias_id}) đã chuyển manual_review do cạn số lượt thử job.`
+        );
+      }
+    } catch (updateErr: any) {
+      console.error(
+        `[WORKER LISTENER ERROR] Không thể cập nhật manual_review cho student ${job.data.studentId}: ${updateErr?.message}`
+      );
+    }
+  }
+}
+
+registrationWorker.on('failed', handleWorkerFailed);
 
 // ═══ Graceful Shutdown (stop_grace_period: 150s) ═══
 const shutdown = async (signal: string) => {

@@ -17,7 +17,8 @@ assert.strictEqual(eval9008.action, 'QUOTA_EXCEEDED');
 console.log('- [-9008 QUOTA_EXCEEDED]: PASS');
 
 const eval103 = evaluateHanetError(-103);
-assert.strictEqual(eval103.action, 'REFRESH_TOKEN');
-console.log('- [-103 REFRESH_TOKEN]: PASS');
+assert.strictEqual(eval103.action, 'SYSTEM_TOKEN_EXPIRED');
+assert.strictEqual(eval103.isRetryable, false);
+console.log('- [-103 SYSTEM_TOKEN_EXPIRED]: PASS');
 
 console.log('✓ TOÀN BỘ KIỂM THỬ ERROR-MAPPING PASS 100%!\n');

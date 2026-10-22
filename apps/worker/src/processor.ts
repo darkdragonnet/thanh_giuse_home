@@ -310,6 +310,7 @@ export async function processRegistrationJob(
   // ═══════════════════════════════════════════════════════════════════════════
   // TẦNG 1: LỖI CƠ SỞ HẠ TẦNG / QUÁ TẢI (-503, TIMEOUT, CIRCUIT BREAKER, NETWORK)
   // Chiến lược: Retry tuần tự + Fixed Backoff 300s (Giữ nguyên trạng thái pending, không drop job)
+  // Nếu chạm trần 3 lần -> Chuyển sang manual_review (P0-2)
   // ═══════════════════════════════════════════════════════════════════════════
   if (
     (evaluation.action === 'RETRY_LATER' ||
@@ -320,6 +321,30 @@ export async function processRegistrationJob(
     returnCode !== -401 &&
     returnCode !== -429
   ) {
+    const maxAttempts = job.opts?.attempts ?? 3;
+    const isExceededRetries = currentRetries >= 2 || (job.attemptsMade >= (maxAttempts - 1)) || (job.attemptsMade >= 2);
+
+    if (isExceededRetries) {
+      const errorCode = String(returnCode !== 1 ? returnCode : '-503');
+      const safeDetailMsg = (evaluation.returnMessage || '').slice(0, 1000);
+      const safeUserMsg = (evaluation.userFacingMessage || 'Hạ tầng quá tải vượt quá số lần thử').slice(0, 500);
+
+      await studentRepo.markFailure(studentId, 'manual_review', errorCode, safeUserMsg);
+      await logRepo.recordLog({
+        student_id: studentId,
+        alias_id: rawJobAliasId || aliasId,
+        class_id: currentStudent?.class_id,
+        action: actionType,
+        result_code: 'MANUAL_REVIEW',
+        result_message: `[FAST_ISOLATION] Cách ly sang manual_review do chạm trần retry (${errorCode}): ${safeDetailMsg}. Gỡ job khỏi queue để thông luồng.`,
+      });
+
+      console.warn(
+        `[FAST ISOLATION] Học sinh ${rawJobAliasId || aliasId} (${studentName}) chuyển sang status="manual_review" do lỗi hạ tầng ${errorCode} chạm trần retry`
+      );
+      return { success: false, quarantined: true };
+    }
+
     // Giữ nguyên trạng thái 'pending', tăng retry_count để theo dõi
     await studentRepo.recordRetryAttempt(
       studentId,
@@ -402,7 +427,12 @@ export async function processRegistrationJob(
     );
   }
 
-  if (evaluation.action === 'REFRESH_TOKEN' || returnCode === -103 || returnCode === -401) {
+  if (
+    evaluation.action === ('SYSTEM_TOKEN_EXPIRED' as any) ||
+    evaluation.action === ('REFRESH_TOKEN' as any) ||
+    returnCode === -103 ||
+    returnCode === -401
+  ) {
     // 1. Tạm dừng queue/worker xử lý tiếp để tránh lãng phí request và spam lỗi
     if (pauseWorker) {
       console.error(
@@ -448,7 +478,10 @@ export async function processRegistrationJob(
       );
     }
 
-    return { success: false, quarantined: true, criticalAlert: 'SYSTEM_TOKEN_EXPIRED' };
+    // 5. Ném UnrecoverableError để kết thúc job ở trạng thái failed tường minh (tránh completed ảo)
+    throw new UnrecoverableError(
+      `HANET Access Token expired (${returnCode}). Toàn bộ hàng đợi đã tạm ngắt và kích hoạt Kill Switch.`
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

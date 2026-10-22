@@ -55,17 +55,17 @@ describe('T010: 3-Tier HANET Error Classification & Mapping', () => {
       expect(eval9008.userFacingMessage).toContain('hết hạn mức lưu trữ Face ID');
     });
 
-    it('-103 (Access Token hết hạn): map sang REFRESH_TOKEN kích hoạt Kill Switch', () => {
+    it('-103 (Access Token hết hạn): map sang SYSTEM_TOKEN_EXPIRED kích hoạt Kill Switch', () => {
       const eval103 = evaluateHanetError(-103, 'Token Expired');
-      expect(eval103.action).toBe('REFRESH_TOKEN');
-      expect(eval103.isRetryable).toBe(true);
+      expect(eval103.action).toBe('SYSTEM_TOKEN_EXPIRED');
+      expect(eval103.isRetryable).toBe(false);
       expect(eval103.userFacingMessage).toContain('hết hạn');
     });
 
-    it('-401 (Unauthorized): map sang REFRESH_TOKEN', () => {
+    it('-401 (Unauthorized): map sang SYSTEM_TOKEN_EXPIRED', () => {
       const eval401 = evaluateHanetError(-401, 'Unauthorized access');
-      expect(eval401.action).toBe('REFRESH_TOKEN');
-      expect(eval401.isRetryable).toBe(true);
+      expect(eval401.action).toBe('SYSTEM_TOKEN_EXPIRED');
+      expect(eval401.isRetryable).toBe(false);
     });
   });
 

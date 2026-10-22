@@ -142,7 +142,6 @@ export class StudentRepository {
          last_error_code = NULL,
          last_error_message = NULL,
          retry_count = 0,
-         is_updating = FALSE,
          updated_at = NOW()
        WHERE id = $1
        RETURNING id`,
