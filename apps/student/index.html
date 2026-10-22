@@ -209,6 +209,55 @@
       font-weight: 600;
       width: fit-content;
     }
+    .btn-teacher-toggle {
+      background: none;
+      border: 1px dashed #2563eb;
+      color: #2563eb;
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 6px;
+      transition: all 0.2s ease;
+    }
+    .btn-teacher-toggle:hover {
+      background: #eff6ff;
+    }
+    .batch-progress-box {
+      display: none;
+      margin-top: 10px;
+      padding: 10px 14px;
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-radius: 10px;
+      text-align: left;
+    }
+    .batch-progress-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #166534;
+      display: flex;
+      justify-content: space-between;
+    }
+    .batch-progress-bar-bg {
+      background: #dcfce7;
+      height: 8px;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .batch-progress-bar-fill {
+      width: 0%;
+      height: 100%;
+      background: #16a34a;
+      transition: width 0.3s ease;
+    }
+    .batch-controls {
+      display: none;
+      margin-top: 10px;
+      gap: 8px;
+    }
     .stats-bar {
       display: flex;
       justify-content: center;
@@ -507,6 +556,18 @@
       <h2>Cổng Nộp Ảnh Nhận Diện</h2>
       <p id="classNameTitle" class="class-subtitle">Đang tải thông tin lớp...</p>
       <div id="teacherBadge" class="teacher-badge">🛡️ Chế độ Giáo viên hỗ trợ (Miễn giới hạn nộp)</div>
+      <div style="margin-top: 6px;">
+        <button type="button" id="teacherToggleBtn" class="btn-teacher-toggle">🔑 Chế độ Giáo viên</button>
+      </div>
+      <div id="batchProgressBox" class="batch-progress-box">
+        <div class="batch-progress-title">
+          <span>📸 Tiến độ chụp của lớp:</span>
+          <span id="batchProgressText">0 / 0 (0%)</span>
+        </div>
+        <div class="batch-progress-bar-bg">
+          <div id="batchProgressBar" class="batch-progress-bar-fill"></div>
+        </div>
+      </div>
       <div id="classStatsBar" class="stats-bar"></div>
     </div>
 
@@ -588,6 +649,12 @@
       <button id="contactAdminBtn" class="btn-secondary" style="display: none;">Gửi admin</button>
     </div>
 
+    <!-- Thanh Điều khiển Chụp Hàng Loạt (Dành riêng cho Giáo viên) -->
+    <div id="batchControlsBox" class="batch-controls">
+      <button type="button" id="skipBatchBtn" class="btn-secondary" style="margin: 0; font-size: 13px;">⏩ Bỏ qua em này</button>
+      <button type="button" id="finishBatchBtn" class="btn-secondary" style="margin: 0; font-size: 13px; color: #dc2626; border-color: #fca5a5;">⏹️ Kết thúc chụp</button>
+    </div>
+
     <!-- Hiển thị trạng thái & Short Polling 3s -->
     <div id="pollingIndicator" class="polling-indicator">
       ⏳ Hệ thống đang xử lý nhận diện khuôn mặt... (Tự động cập nhật mỗi 3 giây)
@@ -640,6 +707,25 @@
   </div>
 </div>
 
+<!-- Modal Xác thực PIN Giáo viên -->
+<div id="teacherPinModal" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-header">🔑 Xác thực Giáo viên Chủ nhiệm</div>
+    <p style="font-size: 14px; color: #555; margin-top: 0;">
+      Nhập mã PIN của lớp để kích hoạt quyền chụp ảnh liên tục và cập nhật đè ảnh học sinh.
+    </p>
+    <div class="form-group">
+      <label for="teacherPinInput">Mã PIN lớp:</label>
+      <input type="password" id="teacherPinInput" placeholder="Nhập PIN của lớp..." autocomplete="off">
+      <div id="pinErrorMsg" style="color: #dc2626; font-size: 13px; margin-top: 6px; display: none;"></div>
+    </div>
+    <div class="btn-group">
+      <button id="verifyPinSubmitBtn" class="btn-primary">Xác nhận PIN</button>
+      <button id="closeTeacherPinModalBtn" class="btn-secondary">Hủy</button>
+    </div>
+  </div>
+</div>
+
 <script>
   // ═══════════════════════════════════════════════════════════════════════════
   // 1. TRÍCH XUẤT THAM SỐ ĐỘNG TỪ URL (/l/:classCode?token=PIN_...)
@@ -660,16 +746,20 @@
     }
     classCode = (classCode || '1').trim();
 
+    const storedPin = sessionStorage.getItem(`tg_teacher_pin_${classCode}`) || '';
     const teacherPin = (
       searchParams.get('token') ||
       searchParams.get('teacher_pin') ||
+      storedPin ||
       ''
     ).trim();
 
     return { classCode, teacherPin };
   }
 
-  const { classCode: activeClassCode, teacherPin: activeTeacherPin } = extractRouteParams();
+  const { classCode: activeClassCode, teacherPin: initialTeacherPin } = extractRouteParams();
+  let activeTeacherPin = initialTeacherPin;
+  const STORAGE_KEY_TEACHER_PIN = `tg_teacher_pin_${activeClassCode}`;
   const STORAGE_KEY_SELECTED_STUDENT = `tg_selected_student_${activeClassCode}`;
   const STORAGE_KEY_CAM_PENDING_TS = `tg_cam_pending_ts_${activeClassCode}`;
   const STORAGE_KEY_CAM_FAIL_COUNT = `tg_cam_fail_${activeClassCode}`;
@@ -682,6 +772,10 @@
 
   const classNameTitle = document.getElementById('classNameTitle');
   const teacherBadge = document.getElementById('teacherBadge');
+  const teacherToggleBtn = document.getElementById('teacherToggleBtn');
+  const batchProgressBox = document.getElementById('batchProgressBox');
+  const batchProgressText = document.getElementById('batchProgressText');
+  const batchProgressBar = document.getElementById('batchProgressBar');
   const classStatsBar = document.getElementById('classStatsBar');
 
   const studentSearchInput = document.getElementById('studentSearchInput');
@@ -712,6 +806,9 @@
 
   const submitBtn = document.getElementById('submitBtn');
   const contactAdminBtn = document.getElementById('contactAdminBtn');
+  const batchControlsBox = document.getElementById('batchControlsBox');
+  const skipBatchBtn = document.getElementById('skipBatchBtn');
+  const finishBatchBtn = document.getElementById('finishBatchBtn');
   const pollingIndicator = document.getElementById('pollingIndicator');
   const statusMsg = document.getElementById('statusMsg');
 
@@ -719,6 +816,12 @@
   const adminNote = document.getElementById('adminNote');
   const sendAdminSubmitBtn = document.getElementById('sendAdminSubmitBtn');
   const closeModalBtn = document.getElementById('closeModalBtn');
+
+  const teacherPinModal = document.getElementById('teacherPinModal');
+  const teacherPinInput = document.getElementById('teacherPinInput');
+  const pinErrorMsg = document.getElementById('pinErrorMsg');
+  const verifyPinSubmitBtn = document.getElementById('verifyPinSubmitBtn');
+  const closeTeacherPinModalBtn = document.getElementById('closeTeacherPinModalBtn');
 
   // Application State
   let studentsList = [];
@@ -795,6 +898,173 @@
     }
     return base;
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 1b. QUẢN LÝ CHẾ ĐỘ GIÁO VIÊN & CHỤP HÀNG LOẠT (BATCH WORKFLOW - US2)
+  // ═══════════════════════════════════════════════════════════════════════════
+  function calculateBatchProgress(students) {
+    if (!Array.isArray(students) || students.length === 0) {
+      return { total: 0, completed: 0, pending: 0, remaining: 0, percent: 0 };
+    }
+    const total = students.length;
+    const completed = students.filter(s => s.status === 'success' || s.status === 'synced').length;
+    const pending = students.filter(s => s.status === 'pending').length;
+    const remaining = students.filter(s => s.status === 'empty' || s.status === 'error').length;
+    const percent = total > 0 ? Math.round(((completed + pending) / total) * 100) : 0;
+    return { total, completed, pending, remaining, percent };
+  }
+
+  function findNextStudentForBatch(students, currentStudentId) {
+    if (!Array.isArray(students) || students.length === 0) return null;
+    const currentIndex = students.findIndex(s => s.id === currentStudentId);
+    const n = students.length;
+
+    // 1. Ưu tiên học sinh trạng thái 'empty'
+    for (let offset = 1; offset <= n; offset++) {
+      const idx = (currentIndex + offset) % n;
+      if (students[idx].status === 'empty') return students[idx];
+    }
+    // 2. Dự phòng học sinh trạng thái 'error' cần chụp lại
+    for (let offset = 1; offset <= n; offset++) {
+      const idx = (currentIndex + offset) % n;
+      if (students[idx].status === 'error') return students[idx];
+    }
+    return null;
+  }
+
+  function updateBatchProgressUI() {
+    if (!isTeacherVerified) {
+      batchProgressBox.style.display = 'none';
+      batchControlsBox.style.display = 'none';
+      teacherToggleBtn.textContent = '🔑 Chế độ Giáo viên';
+      teacherToggleBtn.style.color = '#2563eb';
+      teacherToggleBtn.style.borderColor = '#2563eb';
+      return;
+    }
+
+    batchProgressBox.style.display = 'block';
+    batchControlsBox.style.display = 'flex';
+    teacherToggleBtn.textContent = '🔓 Thoát chế độ GV';
+    teacherToggleBtn.style.color = '#dc2626';
+    teacherToggleBtn.style.borderColor = '#fca5a5';
+
+    const stats = calculateBatchProgress(studentsList);
+    batchProgressText.textContent = `${stats.completed + stats.pending} / ${stats.total} (${stats.percent}%)`;
+    batchProgressBar.style.width = `${stats.percent}%`;
+  }
+
+  function openTeacherPinModal() {
+    pinErrorMsg.style.display = 'none';
+    teacherPinInput.value = '';
+    teacherPinModal.style.display = 'flex';
+    setTimeout(() => teacherPinInput.focus(), 150);
+  }
+
+  function closeTeacherPinModal() {
+    teacherPinModal.style.display = 'none';
+  }
+
+  async function verifyAndActivateTeacherPin(pin) {
+    const cleanPin = (pin || '').trim();
+    if (!cleanPin) {
+      pinErrorMsg.textContent = 'Vui lòng nhập mã PIN của lớp.';
+      pinErrorMsg.style.display = 'block';
+      return false;
+    }
+
+    verifyPinSubmitBtn.disabled = true;
+    verifyPinSubmitBtn.textContent = 'Đang kiểm tra...';
+    pinErrorMsg.style.display = 'none';
+
+    try {
+      const res = await fetch(`/api/classes/${encodeURIComponent(activeClassCode)}/students?token=${encodeURIComponent(cleanPin)}`, {
+        headers: { 'x-teacher-pin': cleanPin }
+      });
+
+      if (!res.ok) {
+        let errData = {};
+        try { errData = await res.json(); } catch {}
+        pinErrorMsg.textContent = errData.message || 'Mã PIN không chính xác.';
+        pinErrorMsg.style.display = 'block';
+        return false;
+      }
+
+      const verified = res.headers.get('X-Teacher-Verified') === 'true';
+      if (!verified) {
+        pinErrorMsg.textContent = 'Mã PIN không đúng cho lớp này.';
+        pinErrorMsg.style.display = 'block';
+        return false;
+      }
+
+      // Xác thực thành công: lưu session và cập nhật UI
+      activeTeacherPin = cleanPin;
+      sessionStorage.setItem(STORAGE_KEY_TEACHER_PIN, cleanPin);
+      teacherPinModal.style.display = 'none';
+      teacherPinInput.value = '';
+      showStatus('🛡️ Đã xác thực chế độ Giáo viên thành công! Bạn có thể chụp hàng loạt và cập nhật đè ảnh.', true);
+
+      await loadStudents(false);
+      return true;
+    } catch (err) {
+      pinErrorMsg.textContent = 'Lỗi kết nối khi xác thực PIN. Vui lòng thử lại.';
+      pinErrorMsg.style.display = 'block';
+      return false;
+    } finally {
+      verifyPinSubmitBtn.disabled = false;
+      verifyPinSubmitBtn.textContent = 'Xác nhận PIN';
+    }
+  }
+
+  function deactivateTeacherMode() {
+    if (confirm('Bạn có chắc chắn muốn thoát khỏi chế độ Giáo viên?')) {
+      activeTeacherPin = '';
+      sessionStorage.removeItem(STORAGE_KEY_TEACHER_PIN);
+      isTeacherVerified = false;
+      stopLiveCamera();
+      showStatus('Đã thoát chế độ Giáo viên.', true);
+      loadStudents(false);
+    }
+  }
+
+  teacherToggleBtn.addEventListener('click', () => {
+    if (isTeacherVerified) {
+      deactivateTeacherMode();
+    } else {
+      openTeacherPinModal();
+    }
+  });
+
+  closeTeacherPinModalBtn.addEventListener('click', closeTeacherPinModal);
+
+  verifyPinSubmitBtn.addEventListener('click', () => {
+    verifyAndActivateTeacherPin(teacherPinInput.value);
+  });
+
+  teacherPinInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      verifyPinSubmitBtn.click();
+    }
+  });
+
+  skipBatchBtn.addEventListener('click', () => {
+    if (!studentsList.length) return;
+    const currentId = currentStudent ? currentStudent.id : -1;
+    const nextStudent = findNextStudentForBatch(studentsList, currentId);
+    if (nextStudent) {
+      studentSelect.value = String(nextStudent.id);
+      clearSelectedPhotoBlob();
+      onStudentSelectionChanged(false);
+      showStatus(`Chuyển sang: ${nextStudent.name}`, true);
+    } else {
+      showStatus('Đã duyệt qua toàn bộ học sinh chưa có ảnh.', true);
+    }
+  });
+
+  finishBatchBtn.addEventListener('click', () => {
+    stopLiveCamera();
+    clearSelectedPhotoBlob();
+    showStatus('Đã kết thúc buổi chụp hàng loạt.', true);
+  });
 
   // ═══════════════════════════════════════════════════════════════════════════
   // 2. KIỂM TRA TƯƠNG THÍCH ZALO WEBVIEW & ĐIỀU HƯỚNG TRÌNH DUYỆT NGOÀI
@@ -1100,6 +1370,7 @@
       studentsList = await res.json();
       renderClassStats(studentsList);
       renderStudentOptions(studentSearchInput.value);
+      updateBatchProgressUI();
 
       // Khôi phục học sinh đang chọn từ bộ nhớ hoặc sessionStorage
       const savedId = currentStudent
@@ -1545,12 +1816,29 @@
       const result = await res.json();
 
       if (res.ok) {
+        const submittedStudentName = currentStudent.name;
+        const submittedStudentId = currentStudent.id;
         showStatus(
           result.message || 'Đã gửi ảnh thành công! Hệ thống đang xếp hàng xử lý.',
           true
         );
         await loadStudents(true);
         startPolling();
+
+        // Chế độ Giáo viên chụp hàng loạt (Batch Photography Workflow):
+        // Giữ luồng camera sống (nếu WebRTC đang bật) và tự động chuyển học sinh kế tiếp
+        if (isTeacherVerified) {
+          const nextStudent = findNextStudentForBatch(studentsList, submittedStudentId);
+          if (nextStudent) {
+            studentSelect.value = String(nextStudent.id);
+            clearSelectedPhotoBlob();
+            onStudentSelectionChanged(false);
+            showStatus(`🎉 Đã nộp ảnh cho ${submittedStudentName}! Tiếp tục chuyển sang: ${nextStudent.name}`, true);
+          } else {
+            showStatus(`🎉 Tuyệt vời! Tất cả học sinh trong lớp đã nộp ảnh thành công!`, true);
+            stopLiveCamera();
+          }
+        }
       } else {
         showStatus(result.message || 'Lỗi khi nộp ảnh nhận diện', false);
         validateForm();

@@ -18,7 +18,7 @@
     "build:mock": "npm run build --workspace=apps/hanet-mock",
     "seed:classes": "npm run seed:classes --workspace=@thanh-giuse/shared-infra",
     "migrate:hanet-aliases": "node apps/api/dist/scripts/migrate-cloud-aliases.js",
-    "test": "vitest run tests/*.test.ts tests/contract/*.spec.ts tests/registration.spec.ts tests/sync-alias-reconciliation.spec.ts tests/requeue-pending-edge-cases.spec.ts tests/concurrency-duplicate-registration.spec.ts && npm run test --workspaces --if-present",
+    "test": "vitest run tests/*.test.ts tests/contract/*.spec.ts tests/registration.spec.ts tests/sync-alias-reconciliation.spec.ts tests/requeue-pending-edge-cases.spec.ts tests/concurrency-duplicate-registration.spec.ts tests/teacher-authorization-bypass.spec.ts && npm run test --workspaces --if-present",
     "test:unit": "vitest run tests/*.test.ts",
     "test:mock": "npm run test --workspace=apps/hanet-mock",
     "verify:mock": "cd apps/hanet-mock && bash tests/curl/verify.sh",

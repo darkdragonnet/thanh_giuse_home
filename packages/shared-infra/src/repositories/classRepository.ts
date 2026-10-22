@@ -148,15 +148,8 @@ export class ClassRepository {
     );
     if (!res.rows[0]) return false;
     const cls = res.rows[0];
-    if (cls.token && cls.token.toUpperCase() === cleanPin) return true;
-
-    // Hỗ trợ PIN chuẩn dạng PIN_<CODE> (VD: PIN_LM, PIN_LM01, PIN_GLV, PIN_GLV0)
-    const code = String(cls.code || '').toUpperCase();
-    if (cleanPin === `PIN_${code}`) return true;
-    if ((code === 'LM' || code === 'LM01') && (cleanPin === 'PIN_LM01' || cleanPin === 'PIN_LM')) return true;
-    if ((code === 'GLV' || code === 'GLV0') && (cleanPin === 'PIN_GLV0' || cleanPin === 'PIN_GLV')) return true;
-    if (cleanPin.startsWith(`PIN_${code}_`)) return true;
-
-    return false;
+    
+    // Chỉ chấp nhận so khớp trực tiếp với classes.token thật, bỏ hoàn toàn fallback theo mã lớp
+    return Boolean(cls.token && cls.token.trim().toUpperCase() === cleanPin);
   }
 }

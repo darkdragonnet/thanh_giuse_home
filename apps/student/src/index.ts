@@ -1,5 +1,6 @@
 export * from './statusConfig.js';
 export * from './utils/canvasCompressor.js';
+export * from './utils/batchWorkflow.js';
 
 import { STATUS_UI_CONFIG, StatusUIConfig } from './statusConfig.js';
 import type { StudentStatus } from '@thanh-giuse/shared-types';

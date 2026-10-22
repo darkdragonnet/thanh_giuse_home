@@ -84,11 +84,11 @@ description: "Actionable, dependency-ordered tasks for Student Face Registration
 **Independent Test**: Gửi 30 ảnh liên tục cho 30 học sinh trong vòng 10 phút trên cùng 1 địa chỉ IP kèm header `x-teacher-pin` hợp lệ; toàn bộ 30 yêu cầu đều được chấp nhận không bị lỗi 429.
 
 ### Tests for User Story 2 (Write FIRST)
-- [ ] T020 [P] [US2] Write integration test in `tests/teacher-authorization-bypass.spec.ts` verifying teacher PIN authentication and rate-limit exemption when submitting 30 consecutive photos from a single IP
+- [X] T020 [P] [US2] Write integration test in `tests/teacher-authorization-bypass.spec.ts` verifying teacher PIN authentication and rate-limit exemption when submitting 30 consecutive photos from a single IP
 
 ### Implementation for User Story 2
-- [ ] T021 [US2] Implement teacher PIN verification and rate-limit bypass mechanism against `classes.token` in `apps/api/src/middleware/rateLimiter.ts`
-- [ ] T022 [US2] Implement teacher PIN entry modal and batch photography workflow in `apps/student/src/index.ts` passing `x-teacher-pin` header on upload requests
+- [X] T021 [US2] Implement teacher PIN verification and rate-limit bypass mechanism against `classes.token` in `apps/api/src/middleware/rateLimiter.ts`
+- [X] T022 [US2] Implement teacher PIN entry modal and batch photography workflow in `apps/student/src/index.ts` passing `x-teacher-pin` header on upload requests
 
 **Checkpoint**: Teachers can register entire classrooms continuously without hitting rate limits.
 
