@@ -13,6 +13,7 @@ import {
   createRedisClient,
   closeRedisClient,
   validateStudentIdentifier,
+  validateImage,
 } from '@thanh-giuse/shared-infra';
 import { apiEnv } from './config.js';
 import { createKillSwitchGuard, createClassLockGuard } from './middleware/guards.js';
@@ -268,21 +269,61 @@ async function handleClassStudentPhotoUpload(
 ) {
   const studentId = parseInt(request.params.studentId, 10);
 
-  // A. Đọc file tải lên
+  // A. Đọc file tải lên và xác thực bằng Image Validator (T014)
   const data = await request.file();
   if (!data) {
-    return reply.status(400).send({ message: 'Vui lòng chọn ảnh tải lên.' });
+    return reply.status(400).send({
+      error: 'Bad Request',
+      errorCode: 'CORRUPTED_IMAGE',
+      message: 'Vui lòng chọn ảnh tải lên.',
+    });
   }
+
+  let buffer: Buffer;
+  try {
+    buffer = await data.toBuffer();
+  } catch (err: any) {
+    if (err?.code === 'FST_REQ_FILE_TOO_LARGE' || data.file.truncated) {
+      return reply.status(413).send({
+        error: 'Payload Too Large',
+        errorCode: 'PAYLOAD_TOO_LARGE',
+        message: 'Dung lượng ảnh vượt quá giới hạn cho phép (tối đa 5MB).',
+      });
+    }
+    return reply.status(400).send({
+      error: 'Bad Request',
+      errorCode: 'CORRUPTED_IMAGE',
+      message: 'Không thể đọc tệp ảnh tải lên.',
+    });
+  }
+
+  if (data.file.truncated) {
+    return reply.status(413).send({
+      error: 'Payload Too Large',
+      errorCode: 'PAYLOAD_TOO_LARGE',
+      message: 'Dung lượng ảnh vượt quá giới hạn cho phép (tối đa 5MB).',
+    });
+  }
+
+  // Xác thực toàn diện qua Image Validator từ @thanh-giuse/shared-infra
+  const validation = await validateImage(buffer);
+  if (!validation.isValid) {
+    const isPayloadTooLarge = validation.errorCode === 'PAYLOAD_TOO_LARGE';
+    const statusCode = isPayloadTooLarge ? 413 : 400;
+    return reply.status(statusCode).send({
+      error: isPayloadTooLarge ? 'Payload Too Large' : 'Bad Request',
+      errorCode: validation.errorCode,
+      message: validation.message,
+    });
+  }
+
+  // Sử dụng convertedBuffer nếu là ảnh HEIC đã được chuyển đổi sang JPEG, ngược lại dùng buffer gốc
+  const finalBuffer = validation.convertedBuffer || buffer;
 
   const filename = `student_${studentId}_${Date.now()}.jpg`;
   const filePath = path.join(UPLOAD_DIR, filename);
 
-  await new Promise<void>((resolve, reject) => {
-    const writeStream = fs.createWriteStream(filePath);
-    data.file.pipe(writeStream);
-    writeStream.on('finish', () => resolve());
-    writeStream.on('error', reject);
-  });
+  await fs.promises.writeFile(filePath, finalBuffer);
 
   // B. Kiểm tra mã PIN Giáo viên (Nếu có PIN hợp lệ của lớp -> cho phép cập nhật lại ảnh học sinh đã 'success')
   const teacherPin = extractTeacherPin(request);
@@ -321,14 +362,27 @@ async function handleClassStudentPhotoUpload(
   const classRecord = await classRepo.findById(claimed.class_id);
   const classCode = classRecord ? classRecord.code : 'UNKNOWN';
 
-  // D. Đẩy job vào hàng đợi BullMQ (Idempotent JobID ưu tiên qr_token hoặc alias_id)
+  // D. Đẩy job vào hàng đợi BullMQ (Idempotent JobID chuẩn hóa theo T019)
   const safeIdentifier = claimed.alias_id || claimed.qr_token || String(claimed.id);
   const isUpdatePhoto = mode === 'UPDATE_PHOTO' && Boolean(claimed.person_id);
   const actionType = isUpdatePhoto ? 'UPDATE_PHOTO' : 'REGISTER';
   const priority = isUpdatePhoto ? 1 : 5;
   const jobId = isUpdatePhoto
-    ? `teacher_override_${safeIdentifier}_${Date.now()}`
-    : `student_${safeIdentifier}`;
+    ? `teacher_override_${claimed.alias_id || safeIdentifier}`
+    : `student_${claimed.alias_id || safeIdentifier}`;
+
+  // Xử lý bẫy job cũ: Nếu job cùng ID đã completed hoặc failed thì xóa trước để lần nộp hợp lệ sau không bị nuốt
+  try {
+    const existingJob = await registrationQueue.getJob(jobId);
+    if (existingJob) {
+      const state = await existingJob.getState();
+      if (state === 'completed' || state === 'failed') {
+        await existingJob.remove();
+      }
+    }
+  } catch (err: any) {
+    server.log.warn(`[BullMQ Clean Old Job] Không thể kiểm tra job cũ ${jobId}: ${err?.message}`);
+  }
 
   const job = await registrationQueue.add(
     isUpdatePhoto ? 'override-photo' : 'register',
@@ -347,6 +401,7 @@ async function handleClassStudentPhotoUpload(
       jobId,
       priority, // Priority = 1 nếu Giáo viên cập nhật ảnh, Priority = 5 nếu đăng ký mới
       removeOnComplete: true,
+      removeOnFail: true,
     }
   );
 
@@ -427,18 +482,55 @@ server.post<{ Params: { qrToken: string } }>(
 
     const data = await request.file();
     if (!data) {
-      return reply.status(400).send({ message: 'Vui lòng chọn ảnh tải lên.' });
+      return reply.status(400).send({
+        error: 'Bad Request',
+        errorCode: 'CORRUPTED_IMAGE',
+        message: 'Vui lòng chọn ảnh tải lên.',
+      });
     }
 
+    let buffer: Buffer;
+    try {
+      buffer = await data.toBuffer();
+    } catch (err: any) {
+      if (err?.code === 'FST_REQ_FILE_TOO_LARGE' || data.file.truncated) {
+        return reply.status(413).send({
+          error: 'Payload Too Large',
+          errorCode: 'PAYLOAD_TOO_LARGE',
+          message: 'Dung lượng ảnh vượt quá giới hạn cho phép (tối đa 5MB).',
+        });
+      }
+      return reply.status(400).send({
+        error: 'Bad Request',
+        errorCode: 'CORRUPTED_IMAGE',
+        message: 'Không thể đọc tệp ảnh tải lên.',
+      });
+    }
+
+    if (data.file.truncated) {
+      return reply.status(413).send({
+        error: 'Payload Too Large',
+        errorCode: 'PAYLOAD_TOO_LARGE',
+        message: 'Dung lượng ảnh vượt quá giới hạn cho phép (tối đa 5MB).',
+      });
+    }
+
+    const validation = await validateImage(buffer);
+    if (!validation.isValid) {
+      const isPayloadTooLarge = validation.errorCode === 'PAYLOAD_TOO_LARGE';
+      const statusCode = isPayloadTooLarge ? 413 : 400;
+      return reply.status(statusCode).send({
+        error: isPayloadTooLarge ? 'Payload Too Large' : 'Bad Request',
+        errorCode: validation.errorCode,
+        message: validation.message,
+      });
+    }
+
+    const finalBuffer = validation.convertedBuffer || buffer;
     const filename = `token_${qrToken}_${Date.now()}.jpg`;
     const filePath = path.join(UPLOAD_DIR, filename);
 
-    await new Promise<void>((resolve, reject) => {
-      const writeStream = fs.createWriteStream(filePath);
-      data.file.pipe(writeStream);
-      writeStream.on('finish', () => resolve());
-      writeStream.on('error', reject);
-    });
+    await fs.promises.writeFile(filePath, finalBuffer);
 
     // Atomic Lock Luồng 2: Cho phép cả học sinh đã 'success' tự cập nhật ảnh (is_updating = TRUE)
     const claimResult = await studentRepo.claimStudentForTokenSelfService(qrToken, filePath);
@@ -460,10 +552,27 @@ server.post<{ Params: { qrToken: string } }>(
     const { student: claimed, mode } = claimResult;
     const classRecord = await classRepo.findById(claimed.class_id);
     const classCode = classRecord ? classRecord.code : 'UNKNOWN';
+
+    const safeIdentifier = claimed.alias_id || claimed.qr_token || String(claimed.id);
     const isUpdatePhoto = mode === 'UPDATE_PHOTO' || Boolean(claimed.person_id);
     const actionType = isUpdatePhoto ? 'UPDATE_PHOTO' : 'REGISTER';
     const priority = isUpdatePhoto ? 1 : 5;
+    const jobId = isUpdatePhoto
+      ? `token_update_${claimed.alias_id || safeIdentifier}`
+      : `student_${claimed.alias_id || safeIdentifier}`;
 
+    // Xử lý bẫy job cũ: Nếu job cùng ID đã completed hoặc failed thì xóa trước
+    try {
+      const existingJob = await registrationQueue.getJob(jobId);
+      if (existingJob) {
+        const state = await existingJob.getState();
+        if (state === 'completed' || state === 'failed') {
+          await existingJob.remove();
+        }
+      }
+    } catch (err: any) {
+      server.log.warn(`[BullMQ Clean Old Job] Không thể kiểm tra job cũ ${jobId}: ${err?.message}`);
+    }
 
     const job = await registrationQueue.add(
       isUpdatePhoto ? 'update-photo-self' : 'register',
@@ -479,9 +588,10 @@ server.post<{ Params: { qrToken: string } }>(
         ...(claimed.person_id ? { personId: claimed.person_id } : {}),
       },
       {
-        jobId: `token_${claimed.qr_token}_${Date.now()}`,
+        jobId,
         priority,
         removeOnComplete: true,
+        removeOnFail: true,
       }
     );
 

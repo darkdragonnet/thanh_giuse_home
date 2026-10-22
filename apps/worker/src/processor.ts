@@ -66,6 +66,28 @@ export async function processRegistrationJob(
     `[PROCESSOR START] Job: ${job.id} | Action: ${actionType} | Student: ${studentName} (${aliasId || qrToken || studentId})`
   );
 
+  // 0. Chốt chặn Idempotency Guard (T019): Đọc lại học sinh từ DB trước khi chạy Sharp và gọi HANET
+  const currentStudent = await studentRepo.findById(studentId);
+  if (!currentStudent) {
+    console.warn(`[PROCESSOR SKIP] Không tìm thấy học sinh ID ${studentId} trong DB. Bỏ qua job.`);
+    return { success: false, quarantined: true };
+  }
+
+  if (actionType !== 'UPDATE_PHOTO' && currentStudent.status && currentStudent.status !== 'pending') {
+    console.warn(
+      `[PROCESSOR SKIP] Học sinh "${studentName}" (ID: ${studentId}) đang ở status="${currentStudent.status}" (khác "pending"). Bỏ qua job trùng, tuyệt đối không gọi HANET.`
+    );
+    await logRepo.recordLog({
+      student_id: studentId,
+      alias_id: currentStudent.alias_id || aliasId,
+      class_id: currentStudent.class_id,
+      action: actionType,
+      result_code: 'SKIPPED_NON_PENDING_JOB',
+      result_message: `Bỏ qua job ${job.id} vì trạng thái DB hiện tại là "${currentStudent.status}" (không phải "pending").`,
+    });
+    return { success: true, aliasId: currentStudent.alias_id || aliasId };
+  }
+
   // 1. Kiểm tra file ảnh đầu vào
   const inputImagePath = path.join(workerEnv.uploadDir, tempFilename);
 
@@ -264,9 +286,9 @@ export async function processRegistrationJob(
   }
 
 
-  // Lấy dữ liệu học sinh hiện tại từ DB để kiểm tra số lần retry
-  const currentStudent = await studentRepo.findById(studentId);
-  const currentRetries = currentStudent?.retry_count ?? 0;
+  // Lấy dữ liệu học sinh mới nhất từ DB để kiểm tra số lần retry
+  const freshStudent = await studentRepo.findById(studentId);
+  const currentRetries = freshStudent?.retry_count ?? 0;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TẦNG 0: NGOẠI LỆ RATE LIMIT (-429 / HTTP 429)

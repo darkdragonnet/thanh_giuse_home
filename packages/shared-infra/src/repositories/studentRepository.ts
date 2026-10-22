@@ -182,7 +182,7 @@ export class StudentRepository {
          retry_count = 0,
          updated_at = NOW()
        WHERE id = $2 
-         AND status IN ('empty', 'error', 'manual_review')
+         AND status IN ('empty', 'error')
        RETURNING *;
     `;
     const res = await this.pool.query(query, [localImagePath, studentId]);
@@ -242,7 +242,7 @@ export class StudentRepository {
         retry_count = 0,
         updated_at = NOW()
       WHERE qr_token = $2
-        AND status IN ('empty', 'error', 'manual_review')
+        AND status IN ('empty', 'error')
       RETURNING *;
     `;
     const regRes = await this.pool.query(registerQuery, [localImagePath, qrToken]);

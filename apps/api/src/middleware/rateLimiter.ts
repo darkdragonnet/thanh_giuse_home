@@ -37,53 +37,92 @@ export function createRateLimiter(options: RateLimiterOptions) {
       }
     }
 
-    // 2. Kiểm tra Teacher PIN Bypass
+    // 2. Kiểm tra Teacher PIN Bypass & Xác định học sinh mục tiêu
+    const params = request.params as Record<string, string>;
+    let targetStudentId: number | null = null;
+    let classId: number | null = null;
+
+    if (params.studentId) {
+      const parsed = parseInt(params.studentId, 10);
+      if (!isNaN(parsed)) {
+        targetStudentId = parsed;
+        const student = await studentRepo.findById(parsed);
+        if (student) classId = student.class_id;
+      }
+    } else if (params.qrToken && typeof studentRepo.findByQrToken === 'function') {
+      const student = await studentRepo.findByQrToken(params.qrToken.trim());
+      if (student) {
+        targetStudentId = student.id;
+        classId = student.class_id;
+      }
+    } else if (params.classId || params.classCode) {
+      const rawClass = (params.classId || params.classCode || '').trim();
+      const parsedId = parseInt(rawClass, 10);
+      if (!isNaN(parsedId) && String(parsedId) === rawClass) {
+        classId = parsedId;
+      } else if (rawClass && typeof classRepo.findByCode === 'function') {
+        const cls = await classRepo.findByCode(rawClass.toUpperCase());
+        if (cls) classId = cls.id;
+      }
+    }
+
     const teacherPin = (
       (request.headers['x-teacher-pin'] as string) ||
       (request.query as Record<string, string>)?.teacher_pin ||
       (request.query as Record<string, string>)?.token
     )?.trim();
 
-    if (teacherPin) {
-      const params = request.params as Record<string, string>;
-      let classId: number | null = null;
-
-      if (params.classId || params.classCode) {
-        const rawClass = (params.classId || params.classCode || '').trim();
-        const parsedId = parseInt(rawClass, 10);
-        if (!isNaN(parsedId) && String(parsedId) === rawClass) {
-          classId = parsedId;
-        } else if (rawClass && typeof classRepo.findByCode === 'function') {
-          const cls = await classRepo.findByCode(rawClass.toUpperCase());
-          if (cls) classId = cls.id;
-        }
-      } else if (params.studentId) {
-        const studentId = parseInt(params.studentId, 10);
-        if (!isNaN(studentId)) {
-          const student = await studentRepo.findById(studentId);
-          if (student) classId = student.class_id;
-        }
-      } else if (params.qrToken && typeof studentRepo.findByQrToken === 'function') {
-        const student = await studentRepo.findByQrToken(params.qrToken.trim());
-        if (student) classId = student.class_id;
-      }
-
-      if (classId) {
-        const isValid = await classRepo.verifyTeacherPin(classId, teacherPin);
-        if (isValid) {
-          // Mã PIN giáo viên của lớp hợp lệ -> Miễn trừ rate limit
-          return;
-        }
+    if (teacherPin && classId) {
+      const isValid = await classRepo.verifyTeacherPin(classId, teacherPin);
+      if (isValid) {
+        // Mã PIN giáo viên của lớp hợp lệ -> Miễn trừ rate limit IP và học sinh
+        return;
       }
     }
 
-    // 3. Thực thi Sliding Window Rate Limit trên IP (chuẩn hóa qua Nginx Reverse Proxy)
+    // 3. Rate Limit theo Học sinh (FR-011: 3 lần / 15 phút / học sinh)
+    const now = Date.now();
+    if (targetStudentId) {
+      const studentLimit = 3;
+      const studentWindowSec = 900; // 15 phút
+      const studentKey = `ratelimit:student:${targetStudentId}`;
+      const studentWindowStart = now - studentWindowSec * 1000;
+
+      const studentPipeline = redis.pipeline();
+      studentPipeline.zremrangebyscore(studentKey, 0, studentWindowStart);
+      studentPipeline.zcard(studentKey);
+      const studentResults = await studentPipeline.exec();
+      const studentReqCount = (studentResults?.[1]?.[1] as number) || 0;
+
+      if (studentReqCount >= studentLimit) {
+        const oldestEntries = await redis.zrange(studentKey, 0, 0, 'WITHSCORES');
+        const oldestScore = oldestEntries[1] ? parseFloat(oldestEntries[1]) : studentWindowStart;
+        const retryAfterSec = Math.max(1, Math.ceil((oldestScore + studentWindowSec * 1000 - now) / 1000));
+
+        reply.header('Retry-After', retryAfterSec);
+        return reply.status(429).send({
+          error: 'Too Many Requests',
+          errorCode: 'STUDENT_RATE_LIMIT_EXCEEDED',
+          message: 'Bạn đã gửi ảnh 3 lần trong vòng 15 phút. Vui lòng thử lại sau.',
+          retryAfter: retryAfterSec,
+        });
+      }
+
+      // Ghi nhận request học sinh vào ZSET
+      const studentMember = `${now}:${Math.random().toString(36).substring(2, 8)}`;
+      await redis
+        .pipeline()
+        .zadd(studentKey, now, studentMember)
+        .expire(studentKey, studentWindowSec)
+        .exec();
+    }
+
+    // 4. Thực thi Sliding Window Rate Limit trên IP (chuẩn hóa qua Nginx Reverse Proxy)
     const rawForwarded = request.headers['x-forwarded-for'];
     const clientIp = typeof rawForwarded === 'string'
       ? rawForwarded.split(',')[0].trim()
       : (request.headers['x-real-ip'] as string) || request.ip || '127.0.0.1';
     const key = `ratelimit:ip:${clientIp}`;
-    const now = Date.now();
     const windowStart = now - windowSec * 1000;
 
     // Sử dụng Redis multi pipeline để bảo đảm tính nguyên tử

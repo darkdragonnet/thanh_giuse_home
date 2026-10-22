@@ -34,7 +34,7 @@ description: "Actionable, dependency-ordered tasks for Student Face Registration
 - [X] T007 [P] Write unit test in `tests/sync-rate-limiter.test.ts` asserting BullMQ rate limiter pacing enforcing `hanet_sync_rate_limit = 1 req/phút` (delay of 60,000 ms between jobs)
 - [X] T008 [P] Write integration test in `tests/selective-rate-limit.test.ts` validating FR-011 selective IP rate limiting (60 req/min/IP ceiling applies strictly to write endpoints `POST /api/students/:id/photo` and teacher PIN verify, whereas read endpoints `GET /api/students/:id/status` and `GET /api/classes` are completely bypassed)
 - [X] T009 Implement selective IP rate limiter middleware in `apps/api/src/middleware/rateLimiter.ts` enforcing FR-011 selective counting for write routes and bypassing read routes
-- [ ] T010 Implement 3-tier error mapping and classification in `packages/error-mapping/src/index.ts` (-503 transient overload with 300s fixed backoff, -9006 data error to manual_review, -9008/-103 critical account alert)
+- [X] T010 Implement 3-tier error mapping and classification in `packages/error-mapping/src/index.ts` (-503 transient overload with 300s fixed backoff, -9006 data error to manual_review, -9008/-103 critical account alert)
 
 **Checkpoint**: Foundation ready - all constitution baseline gates verified. User story implementation can now begin.
 
@@ -47,14 +47,14 @@ description: "Actionable, dependency-ordered tasks for Student Face Registration
 **Independent Test**: Dùng trình duyệt di động truy cập, chọn một học sinh chưa đăng ký (`status='empty'`), nộp ảnh chân dung hợp lệ và nhận phản hồi HTTP 200 `pending` trong <1.500ms; worker chuẩn hóa 1280x736 và đồng bộ thành công sang `@thanh-giuse/hanet-mock`.
 
 ### Tests for User Story 1 (Write FIRST)
-- [ ] T011 [P] [US1] Write contract and integration tests in `tests/contract/test-student-photo-upload.spec.ts` for `POST /api/students/:id/photo` per `contracts/student-api.yaml` (accepting <1MB, returning 200 with queue receipt in <1.500ms)
+- [X] T011 [P] [US1] Write contract and integration tests in `tests/contract/test-student-photo-upload.spec.ts` for `POST /api/students/:id/photo` per `contracts/student-api.yaml` (accepting <1MB, returning 200 with queue receipt in <1.500ms)
 
 ### Implementation for User Story 1
-- [ ] T012 [P] [US1] Implement client-side Canvas pre-compression utility in `apps/student/src/utils/canvasCompressor.ts` (max dimension 1920px, JPEG 0.85 quality, target <800 KB, hard ceiling <1 MB)
+- [X] T012 [P] [US1] Implement client-side Canvas pre-compression utility in `apps/student/src/utils/canvasCompressor.ts` (max dimension 1920px, JPEG 0.85 quality, target <800 KB, hard ceiling <1 MB)
 - [ ] T013 [P] [US1] Build mobile-first photo capture, guidelines, and preview interface in `apps/student/src/components/CameraCapture.tsx` and `apps/student/src/index.ts`
-- [ ] T014 [US1] Implement asynchronous photo upload endpoint `POST /api/students/:id/photo` with multipart file intake and Fastify payload guard in `apps/api/src/index.ts`
-- [ ] T015 [US1] Implement sequential image normalization in `apps/worker/src/imageProcessor.ts` resizing to 1280x736 with `fit: 'cover', position: 'center'`, `sharp.cache(false)`, and `sharp.concurrency(1)`
-- [ ] T016 [US1] Implement BullMQ registration processor in `apps/worker/src/processor.ts` calling `@thanh-giuse/hanet-client` to register face on cloud and updating student status to `success`
+- [X] T014 [US1] Implement asynchronous photo upload endpoint `POST /api/students/:id/photo` with multipart file intake and Fastify payload guard in `apps/api/src/index.ts`
+- [X] T015 [US1] Implement sequential image normalization in `apps/worker/src/imageProcessor.ts` resizing to 1280x736 with `fit: 'cover', position: 'center'`, `sharp.cache(false)`, and `sharp.concurrency(1)`
+- [X] T016 [US1] Implement BullMQ registration processor in `apps/worker/src/processor.ts` calling `@thanh-giuse/hanet-client` to register face on cloud and updating student status to `success`
 
 **Checkpoint**: User Story 1 complete and independently testable as MVP.
 
@@ -67,11 +67,11 @@ description: "Actionable, dependency-ordered tasks for Student Face Registration
 **Independent Test**: Gửi đồng thời hai HTTP POST photo request cho cùng một `student_id`; đúng 1 request thành công (200), request còn lại bị từ chối với HTTP 409 Conflict.
 
 ### Tests for User Story 4 (Write FIRST)
-- [ ] T017 [P] [US4] Write concurrency integration test in `tests/concurrency-duplicate-registration.spec.ts` simulating simultaneous duplicate registration requests to assert HTTP 409 Conflict on the second attempt (REQUIRED GATE: Principle III)
+- [X] T017 [P] [US4] Write concurrency integration test in `tests/concurrency-duplicate-registration.spec.ts` simulating simultaneous duplicate registration requests to assert HTTP 409 Conflict on the second attempt (REQUIRED GATE: Principle III)
 
 ### Implementation for User Story 4
-- [ ] T018 [US4] Implement atomic conditional update query in `apps/api/src/services/registration.ts` (`UPDATE students SET status = 'pending', local_image_path = :path WHERE id = :id AND status IN ('empty', 'error') RETURNING id, status`) returning HTTP 409 Conflict when 0 rows updated
-- [ ] T019 [US4] Enforce idempotent BullMQ job IDs keyed by `student_${alias_id}` in `apps/api/src/queue.ts` to prevent duplicate queued tasks
+- [X] T018 [US4] Implement atomic conditional update query in `apps/api/src/services/registration.ts` (`UPDATE students SET status = 'pending', local_image_path = :path WHERE id = :id AND status IN ('empty', 'error') RETURNING id, status`) returning HTTP 409 Conflict when 0 rows updated
+- [X] T019 [US4] Enforce idempotent BullMQ job IDs keyed by `student_${alias_id}` in `apps/api/src/queue.ts` to prevent duplicate queued tasks
 
 **Checkpoint**: Atomic DB locks prevent concurrent duplicate jobs across multiple clients.
 

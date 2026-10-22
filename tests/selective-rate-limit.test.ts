@@ -186,4 +186,95 @@ describe('T008: FR-011 Selective IP Rate Limiter Integration & Unit Test', () =>
     await limiter(mockReq, reply);
     expect(statusSent).toBe(200);
   });
+
+  describe('Rate Limit theo Học Sinh (3 lần / 15 phút / học sinh)', () => {
+    it('Chặn và trả về HTTP 429 khi học sinh gửi quá 3 lần / 15 phút', async () => {
+      const mockRedis = {
+        pipeline: () => ({
+          zremrangebyscore: () => {},
+          zcard: () => {},
+          exec: async () => [[null, 0], [null, 3]], // Học sinh đã gửi 3 lần
+          zadd: () => ({ expire: () => ({ exec: async () => [] }) }),
+        }),
+        zrange: async () => ['member_1', String(Date.now() - 60_000)],
+      } as any;
+
+      const limiter = createRateLimiter({
+        redis: mockRedis,
+        classRepo: { verifyTeacherPin: vi.fn() } as any,
+        studentRepo: { findById: vi.fn().mockResolvedValue({ id: 10, class_id: 1 }) } as any,
+        adminSecret: 'secret',
+      });
+
+      const mockReq = {
+        headers: { 'x-forwarded-for': '192.168.1.100' },
+        query: {},
+        params: { studentId: '10' },
+        ip: '192.168.1.100',
+      } as any;
+
+      let statusSent = 200;
+      let bodySent: any = null;
+      const reply = {
+        header: () => {},
+        status: (s: number) => {
+          statusSent = s;
+          return {
+            send: (b: any) => {
+              bodySent = b;
+            },
+          };
+        },
+      } as any;
+
+      await limiter(mockReq, reply);
+      expect(statusSent).toBe(429);
+      expect(bodySent?.errorCode).toBe('STUDENT_RATE_LIMIT_EXCEEDED');
+      expect(bodySent?.message).toContain('3 lần trong vòng 15 phút');
+    });
+
+    it('Miễn trừ Rate Limit học sinh khi có mã PIN giáo viên hợp lệ', async () => {
+      const mockRedis = {
+        pipeline: () => ({
+          zremrangebyscore: () => {},
+          zcard: () => {},
+          exec: async () => [[null, 0], [null, 10]], // Đã gửi 10 lần
+        }),
+      } as any;
+
+      const mockClassRepo = {
+        verifyTeacherPin: vi.fn().mockResolvedValue(true),
+      };
+
+      const limiter = createRateLimiter({
+        redis: mockRedis,
+        classRepo: mockClassRepo as any,
+        studentRepo: { findById: vi.fn().mockResolvedValue({ id: 10, class_id: 2 }) } as any,
+        adminSecret: 'secret',
+      });
+
+      const mockReq = {
+        headers: {
+          'x-forwarded-for': '192.168.1.100',
+          'x-teacher-pin': 'TEACHER_VALID_PIN',
+        },
+        query: {},
+        params: { studentId: '10' },
+        ip: '192.168.1.100',
+      } as any;
+
+      let statusSent = 200;
+      const reply = {
+        header: () => {},
+        status: (s: number) => {
+          statusSent = s;
+          return { send: () => {} };
+        },
+      } as any;
+
+      await limiter(mockReq, reply);
+      expect(statusSent).toBe(200);
+      expect(mockClassRepo.verifyTeacherPin).toHaveBeenCalledWith(2, 'TEACHER_VALID_PIN');
+    });
+  });
 });

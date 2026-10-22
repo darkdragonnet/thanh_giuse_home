@@ -524,6 +524,16 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({ success: true, message: 'Đã hoàn trả trạng thái học sinh về empty.' });
     });
 
+    // 7b. POST /api/admin/students/:id/unlock (Chuẩn hóa theo contracts/admin-api.yaml)
+    protectedRoutes.post('/students/:id/unlock', async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const success = await studentRepo.resetStudentStatus(Number(id));
+      if (!success) {
+        return reply.status(404).send({ success: false, message: 'Không tìm thấy học sinh để mở khóa' });
+      }
+      return reply.send({ success: true, message: 'Đã mở khóa hồ sơ học sinh về trạng thái empty.' });
+    });
+
     // 7.1. PUT /api/admin/students/:id (Cập nhật họ tên học sinh)
     protectedRoutes.put('/students/:id', async (req, reply) => {
       const { id } = req.params as { id: string };

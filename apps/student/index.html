@@ -1437,27 +1437,59 @@
     img.src = objectUrl;
   }
 
+  // ═══ CHỐT CHẶN TRẦN CỨNG CANVAS COMPRESSOR (< 1MB) ═══
+  const HARD_CEILING_BYTES = 1024 * 1024; // 1 MB
+
   function finalizeCanvasCompression(canvas, width, height) {
-    canvas.toBlob((blob) => {
-      if (!blob) {
-        showStatus('Lỗi khi nén ảnh chân dung. Vui lòng thử lại.', false);
-        return;
-      }
-      if (currentPreviewUrl) {
-        URL.revokeObjectURL(currentPreviewUrl);
-      }
-      compressedBlob = blob;
-      currentPreviewUrl = URL.createObjectURL(blob);
-      previewImg.src = currentPreviewUrl;
-      previewImg.style.display = 'block';
-      previewPlaceholder.style.display = 'none';
+    const qualities = [0.85, 0.75, 0.65, 0.55, 0.45, 0.35];
+    let qIndex = 0;
 
-      const sizeKB = Math.round(blob.size / 1024);
-      imageMetaInfo.textContent = `✔ Ảnh hợp lệ (${width}×${height}px • ${sizeKB} KB)`;
-      imageMetaInfo.style.display = 'block';
+    function tryCompressNextQuality() {
+      const currentQuality = qualities[qIndex];
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          showStatus('Lỗi khi nén ảnh chân dung. Vui lòng thử lại.', false);
+          return;
+        }
 
-      validateForm();
-    }, 'image/jpeg', 0.85);
+        // Nếu blob vượt trần 1MB và vẫn còn nấc giảm chất lượng -> thử nấc tiếp theo
+        if (blob.size > HARD_CEILING_BYTES && qIndex < qualities.length - 1) {
+          qIndex++;
+          tryCompressNextQuality();
+          return;
+        }
+
+        // Nếu đã xuống sàn mà vẫn vượt trần 1MB -> Chặn gửi và báo lỗi thân thiện
+        if (blob.size > HARD_CEILING_BYTES) {
+          const sizeMB = (blob.size / (1024 * 1024)).toFixed(2);
+          showStatus(`Ảnh có dung lượng quá lớn (${sizeMB} MB), vượt quá giới hạn 1 MB sau khi nén tối đa. Vui lòng chọn ảnh khác nhẹ hơn.`, false);
+          compressedBlob = null;
+          previewImg.style.display = 'none';
+          previewPlaceholder.style.display = 'block';
+          imageMetaInfo.style.display = 'none';
+          validateForm();
+          return;
+        }
+
+        // Chấp nhận ảnh đạt chuẩn < 1MB
+        if (currentPreviewUrl) {
+          URL.revokeObjectURL(currentPreviewUrl);
+        }
+        compressedBlob = blob;
+        currentPreviewUrl = URL.createObjectURL(blob);
+        previewImg.src = currentPreviewUrl;
+        previewImg.style.display = 'block';
+        previewPlaceholder.style.display = 'none';
+
+        const sizeKB = Math.round(blob.size / 1024);
+        imageMetaInfo.textContent = `✔ Ảnh hợp lệ (${width}×${height}px • ${sizeKB} KB • Q${Math.round(currentQuality * 100)}%)`;
+        imageMetaInfo.style.display = 'block';
+
+        validateForm();
+      }, 'image/jpeg', currentQuality);
+    }
+
+    tryCompressNextQuality();
   }
 
   photoInput.addEventListener('change', (e) => {
