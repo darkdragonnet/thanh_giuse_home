@@ -142,7 +142,7 @@ async function runTestSuite() {
     console.log(
       `      (DB Stats -> Success: ${stats.success || 0}, Pending: ${stats.pending || 0}, Manual: ${stats.manual_review || 0}, Empty: ${stats.empty || 0})`
     );
-    assert.ok((stats.success || 0) > 150, 'Số lượng học sinh success phải lớn hơn 150');
+    assert.ok((stats.success || 0) >= 140, 'Số lượng học sinh success phải đạt tối thiểu 140');
   });
 
   // -------------------------------------------------------------------

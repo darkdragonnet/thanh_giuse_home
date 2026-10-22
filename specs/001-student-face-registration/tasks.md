@@ -51,7 +51,7 @@ description: "Actionable, dependency-ordered tasks for Student Face Registration
 
 ### Implementation for User Story 1
 - [X] T012 [P] [US1] Implement client-side Canvas pre-compression utility in `apps/student/src/utils/canvasCompressor.ts` (max dimension 1920px, JPEG 0.85 quality, target <800 KB, hard ceiling <1 MB)
-- [ ] T013 [P] [US1] Build mobile-first photo capture, guidelines, and preview interface in `apps/student/src/components/CameraCapture.tsx` and `apps/student/src/index.ts`
+- [ ] T013 [P] [US1] Build mobile-first photo capture, guidelines, and preview interface in `apps/student/src/components/CameraCapture.tsx` and `apps/student/src/index.ts` (Deferred by project decision — portal remains the monolithic HTML implementation; not building the separate CameraCapture component.)
 - [X] T014 [US1] Implement asynchronous photo upload endpoint `POST /api/students/:id/photo` with multipart file intake and Fastify payload guard in `apps/api/src/index.ts`
 - [X] T015 [US1] Implement sequential image normalization in `apps/worker/src/imageProcessor.ts` resizing to 1280x736 with `fit: 'cover', position: 'center'`, `sharp.cache(false)`, and `sharp.concurrency(1)`
 - [X] T016 [US1] Implement BullMQ registration processor in `apps/worker/src/processor.ts` calling `@thanh-giuse/hanet-client` to register face on cloud and updating student status to `success`
@@ -101,11 +101,11 @@ description: "Actionable, dependency-ordered tasks for Student Face Registration
 **Independent Test**: Nộp ảnh và kiểm tra `GET /api/students/:id/status` trả về vị trí hàng đợi; đóng trình duyệt và tra cứu lại sau nhiều giờ, trạng thái `pending` vẫn được bảo toàn an toàn.
 
 ### Tests for User Story 3 (Write FIRST)
-- [ ] T023 [P] [US3] Write frontend integration test in `tests/frontend-polling.spec.ts` validating 3-second polling interval and human-friendly error messages upon queue rejection (REQUIRED GATE: Principle V)
+- [X] T023 [P] [US3] Write frontend integration test in `tests/frontend-polling.spec.ts` validating 3-second polling interval and human-friendly error messages upon queue rejection (REQUIRED GATE: Principle V)
 
 ### Implementation for User Story 3
-- [ ] T024 [P] [US3] Implement status inquiry endpoint `GET /api/students/:id/status` in `apps/api/src/routes/status.ts` returning current `status`, `queue_position`, and `estimated_wait_minutes` without expiring `pending`
-- [ ] T025 [US3] Implement client-side 3-second short polling cycle and queue position feedback modal in `apps/student/src/components/QueueStatusModal.tsx` and `apps/student/src/index.ts`
+- [X] T024 [P] [US3] Implement status inquiry endpoint `GET /api/students/:id/status` in `apps/api/src/routes/status.ts` returning current `status`, `queue_position`, and `estimated_wait_minutes` without expiring `pending`
+- [X] T025 [US3] Implement client-side 3-second short polling cycle and queue position feedback modal in `apps/student/src/components/QueueStatusModal.tsx` and `apps/student/src/index.ts`
 
 **Checkpoint**: Polling operates at 3-second intervals with non-expiring pending state.
 
@@ -118,15 +118,15 @@ description: "Actionable, dependency-ordered tasks for Student Face Registration
 **Independent Test**: Giả lập lỗi -103 từ mock server, kiểm chứng worker dừng đẩy và `settings.registration_enabled = 'false'`; giả lập lỗi -503 kiểm chứng 5 phút cố định retry 3 lần; Admin gọi `POST /api/admin/students/:id/unlock` mở khóa hồ sơ `manual_review` về `empty`.
 
 ### Tests for User Story 5 (Write FIRST)
-- [ ] T026 [P] [US5] Write integration test in `tests/kill-switch-103.spec.ts` simulating error `-103 (ACCESS_TOKEN_EXPIRE)` against `@thanh-giuse/hanet-mock` to verify that `settings.registration_enabled = 'false'` is written to PostgreSQL, Redis `setting:kill_switch='true'` is set, and `worker.pause()` is executed without auto token refresh (REQUIRED GATE: Principle IV)
-- [ ] T027 [P] [US5] Write integration test in `tests/fixed-backoff-503.spec.ts` simulating error `-503` verifying 5-minute fixed backoff (300,000 ms), maximum 3 attempts per error tier, then transitioning to `manual_review` cross-referencing `tests/verify-3tier-error-handling.ts`
-- [ ] T028 [P] [US5] Write contract tests in `tests/contract/test-admin-manual-review.spec.ts` for `GET /api/admin/students/manual-review` and `POST /api/admin/students/:id/unlock` per `contracts/admin-api.yaml`
+- [X] T026 [P] [US5] Write integration test in `tests/kill-switch-103.spec.ts` simulating error `-103 (ACCESS_TOKEN_EXPIRE)` against `@thanh-giuse/hanet-mock` to verify that `settings.registration_enabled = 'false'` is written to PostgreSQL, Redis `setting:kill_switch='true'` is set, and `worker.pause()` is executed without auto token refresh (REQUIRED GATE: Principle IV)
+- [X] T027 [P] [US5] Write integration test in `tests/fixed-backoff-503.spec.ts` simulating error `-503` verifying 5-minute fixed backoff (300,000 ms), maximum 3 attempts per error tier, then transitioning to `manual_review` cross-referencing `tests/verify-3tier-error-handling.ts`
+- [X] T028 [P] [US5] Write contract tests in `tests/contract/test-admin-manual-review.spec.ts` for `GET /api/admin/students/manual-review` and `POST /api/admin/students/:id/unlock` per `contracts/admin-api.yaml`
 
 ### Implementation for User Story 5
-- [ ] T029 [US5] Implement Kill Switch triggers (-103 sets `registration_enabled='false'` in PostgreSQL, halts queue, no token refresh) and fixed 5-minute backoff (-503 with max 3 attempts then `manual_review`) in `apps/worker/src/processor.ts`
-- [ ] T030 [US5] Implement `GET /api/admin/students/manual-review` and `POST /api/admin/students/:id/unlock` endpoints in `apps/api/src/routes/admin.ts` per `contracts/admin-api.yaml` with audit logging in `logs` table
-- [ ] T031 [US5] Implement Admin manual review management page and unlock action dialog in `apps/admin/src/pages/ManualReviewApproval.tsx`
-- [ ] T032 [US5] Implement Admin emergency safeguards management panel in `apps/admin/src/pages/SystemSettings.tsx` connecting to `POST /api/admin/settings/kill-switch` to toggle global registration
+- [X] T029 [US5] Implement Kill Switch triggers (-103 sets `registration_enabled='false'` in PostgreSQL, halts queue, no token refresh) and fixed 5-minute backoff (-503 with max 3 attempts then `manual_review`) in `apps/worker/src/processor.ts`
+- [X] T030 [US5] Implement `GET /api/admin/students/manual-review` and `POST /api/admin/students/:id/unlock` endpoints in `apps/api/src/routes/admin.ts` per `contracts/admin-api.yaml` with audit logging in `logs` table
+- [X] T031 [US5] Implement Admin manual review management page and unlock action dialog in `apps/admin/src/pages/ManualReviewApproval.tsx`
+- [X] T032 [US5] Implement Admin emergency safeguards management panel in `apps/admin/src/pages/SystemSettings.tsx` connecting to `POST /api/admin/settings/kill-switch` to toggle global registration
 
 **Checkpoint**: Kill Switch halts queues on -103, -503 handles fixed 5-minute backoffs, and Admin can review and unlock quarantined students.
 
@@ -136,9 +136,9 @@ description: "Actionable, dependency-ordered tasks for Student Face Registration
 
 **Purpose**: System-wide integration, full regression pipeline verification, and documentation integrity.
 
-- [ ] T033 [P] Write comprehensive end-to-end integration test runner in `tests/e2e-registration-pipeline.spec.ts` executing end-to-end enrollment against `@thanh-giuse/hanet-mock`
-- [ ] T034 Execute full test suite verifying all 5 Constitution REQUIRED GATES against `tests/verify-production-suite.ts` and `tests/verify-3tier-error-handling.ts`
-- [ ] T035 [P] Update operational runbook and deployment validation procedures in `docs/RUNBOOK.md` and `specs/001-student-face-registration/quickstart.md`
+- [X] T033 [P] Write comprehensive end-to-end integration test runner in `tests/e2e-registration-pipeline.spec.ts` executing end-to-end enrollment against `@thanh-giuse/hanet-mock`
+- [X] T034 Execute full test suite verifying all 5 Constitution REQUIRED GATES against `tests/verify-production-suite.ts` and `tests/verify-3tier-error-handling.ts`
+- [X] T035 [P] Update operational runbook and deployment validation procedures in `docs/RUNBOOK.md` and `specs/001-student-face-registration/quickstart.md`
 
 ---
 

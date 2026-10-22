@@ -60,9 +60,9 @@ async function main() {
     body: JSON.stringify({ scenario: '-503', hits: 1 }),
   });
 
-  // Reset student 1 về pending với retry_count = 0
+  // Reset student 1 về pending với retry_count = 0 và alias_id chuẩn 9 ký tự (Cloud Ceiling Guard)
   await pool.query(
-    "UPDATE students SET status = 'pending', retry_count = 0, local_image_path = $1 WHERE id = 1",
+    "UPDATE students SET status = 'pending', retry_count = 0, alias_id = 'TS1A_0001', local_image_path = $1 WHERE id = 1",
     [sampleImagePath]
   );
 
@@ -71,7 +71,7 @@ async function main() {
     attemptsMade: 1,
     data: {
       studentId: 1,
-      aliasId: 'STU_10A1_001_A7B2C',
+      aliasId: 'TS1A_0001',
       studentName: 'Nguyễn Hoàng Long',
       classCode: '10A1',
       tempFilename: 'sample_3tier_test.jpg',
@@ -120,7 +120,7 @@ async function main() {
   });
 
   await pool.query(
-    "UPDATE students SET status = 'pending', local_image_path = $1 WHERE id = 4",
+    "UPDATE students SET status = 'pending', alias_id = 'TS1A_0004', local_image_path = $1 WHERE id = 4",
     [sampleImagePath]
   );
 
@@ -129,7 +129,7 @@ async function main() {
     attemptsMade: 1,
     data: {
       studentId: 4,
-      aliasId: 'STU_10A2_001_K1L2M',
+      aliasId: 'TS1A_0004',
       studentName: 'Phạm Đức Trọng',
       classCode: '10A2',
       tempFilename: 'sample_3tier_test.jpg',
@@ -170,7 +170,7 @@ async function main() {
   });
 
   await pool.query(
-    "UPDATE students SET status = 'pending', local_image_path = $1 WHERE id = 5",
+    "UPDATE students SET status = 'pending', alias_id = 'TS1A_0005', local_image_path = $1 WHERE id = 5",
     [sampleImagePath]
   );
 
@@ -185,7 +185,7 @@ async function main() {
     attemptsMade: 1,
     data: {
       studentId: 5,
-      aliasId: 'STU_10A2_002_N3P4Q',
+      aliasId: 'TS1A_0005',
       studentName: 'Vũ Mai Phương',
       classCode: '10A2',
       tempFilename: 'sample_3tier_test.jpg',
@@ -194,14 +194,27 @@ async function main() {
     },
   } as any;
 
-  const resTier3 = await processRegistrationJob(jobTier3, {
-    studentRepo,
-    logRepo,
-    hanetClient,
-    pauseWorker: mockPauseWorker,
-  });
+  let tier3Threw = false;
+  try {
+    await processRegistrationJob(jobTier3, {
+      studentRepo,
+      logRepo,
+      hanetClient,
+      pauseWorker: mockPauseWorker,
+    });
+  } catch (err: any) {
+    if (err.name === 'UnrecoverableError' || (err.message && err.message.includes('-9008'))) {
+      tier3Threw = true;
+      console.log(`- Worker ném đúng UnrecoverableError: "${err.message}"`);
+    } else {
+      throw err;
+    }
+  }
 
-  console.log('- Kết quả xử lý Tầng 3:', resTier3);
+  if (!tier3Threw) {
+    throw new Error('Tầng 3 Thất bại: Không ném UnrecoverableError khi gặp -9008');
+  }
+
   const student5After = await studentRepo.findById(5);
   console.log(`- Trạng thái DB của Student 5: status="${student5After?.status}", last_error="${student5After?.last_error_code}"`);
 
@@ -211,7 +224,7 @@ async function main() {
 
   // Kiểm tra Audit Log có ghi nhận CRITICAL_QUOTA_EXCEEDED
   const logCritical = await pool.query(
-    "SELECT result_code, result_message FROM logs WHERE alias_id = 'STU_10A2_002_N3P4Q' AND result_code = 'CRITICAL_QUOTA_EXCEEDED'"
+    "SELECT result_code, result_message FROM logs WHERE alias_id = 'TS1A_0005' AND result_code = 'CRITICAL_QUOTA_EXCEEDED'"
   );
   if (logCritical.rows.length === 0) {
     throw new Error('Tầng 3 Thất bại: Không tìm thấy Audit Log CRITICAL_QUOTA_EXCEEDED');
@@ -221,6 +234,10 @@ async function main() {
 
   // Cleanup
   if (fs.existsSync(sampleImagePath)) fs.unlinkSync(sampleImagePath);
+  await pool.query("UPDATE students SET status = 'empty', alias_id = 'STU_10A1_001_A7B2C', retry_count = 0, last_error_code = NULL, last_error_message = NULL WHERE id = 1");
+  await pool.query("UPDATE students SET status = 'success', alias_id = 'STU_10A2_001_K1L2M', last_error_code = NULL, last_error_message = NULL WHERE id = 4");
+  await pool.query("UPDATE students SET status = 'success', alias_id = 'STU_10A2_002_N3P4Q', last_error_code = NULL, last_error_message = NULL WHERE id = 5");
+  await pool.query("DELETE FROM logs WHERE alias_id IN ('TS1A_0001', 'TS1A_0004', 'TS1A_0005')");
   await closeDbPool(pool);
 
   console.log('═══════════════════════════════════════════════════════════════');
