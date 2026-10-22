@@ -306,9 +306,9 @@
     }
     .badge-empty { background: #f3f4f6; color: #4b5563; border: 1px solid #d1d5db; }
     .badge-pending { background: #fef9c3; color: #854d0e; border: 1px solid #facc15; }
-    .badge-success { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
-    .badge-error { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
-    .badge-manual_review { background: #ffedd5; color: #9a3412; border: 1px solid #fdba74; }
+    .badge-success, .badge-synced { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+    .badge-error, .badge-failed_quota_exceeded { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+    .badge-manual_review, .badge-conflict_pending_review { background: #ffedd5; color: #9a3412; border: 1px solid #fdba74; }
 
     .error-detail-box {
       display: none;
@@ -834,7 +834,7 @@
   let pollingTimer = null;
   let pollingCount = 0;
 
-  // Cấu hình 5 trạng thái chuẩn hóa
+  // Cấu hình 8 trạng thái chuẩn hóa theo statusConfig.ts
   const STATUS_CONFIG = {
     empty: {
       label: 'Chưa nộp ảnh',
@@ -860,6 +860,14 @@
       disabled: false,
       showSecondary: true
     },
+    synced: {
+      label: 'Đã hoàn tất',
+      badgeClass: 'badge-synced',
+      dot: '🟢',
+      btnText: 'Cập nhật hình',
+      disabled: false,
+      showSecondary: true
+    },
     error: {
       label: 'Lỗi xử lý',
       badgeClass: 'badge-error',
@@ -868,19 +876,35 @@
       disabled: false,
       showSecondary: true
     },
+    failed_quota_exceeded: {
+      label: 'Tạm khóa (Hết hạn mức)',
+      badgeClass: 'badge-failed_quota_exceeded',
+      dot: '🔴',
+      btnText: 'Tạm ngưng nhận ảnh',
+      disabled: true,
+      showSecondary: true
+    },
     manual_review: {
       label: 'Cần chụp lại / Chờ duyệt',
       badgeClass: 'badge-manual_review',
       dot: '🟠',
-      btnText: 'Nộp lại ảnh khác',
-      disabled: false,
+      btnText: 'Đang chờ admin duyệt',
+      disabled: true,
+      showSecondary: true
+    },
+    conflict_pending_review: {
+      label: 'Chờ duyệt xung đột',
+      badgeClass: 'badge-conflict_pending_review',
+      dot: '🟠',
+      btnText: 'Chờ duyệt',
+      disabled: true,
       showSecondary: true
     }
   };
 
   function getEffectiveStatusConfig(status) {
     const base = STATUS_CONFIG[status] || STATUS_CONFIG.empty;
-    if (status === 'success' && !isTeacherVerified) {
+    if ((status === 'success' || status === 'synced') && !isTeacherVerified) {
       return {
         ...base,
         btnText: 'Đã hoàn tất đăng ký',
@@ -888,7 +912,7 @@
         showSecondary: true
       };
     }
-    if (status === 'success' && isTeacherVerified) {
+    if ((status === 'success' || status === 'synced') && isTeacherVerified) {
       return {
         ...base,
         btnText: '🔄 Cập nhật lại hình (GV)',
@@ -1458,16 +1482,25 @@
     sessionStorage.setItem(STORAGE_KEY_SELECTED_STUDENT, String(currentStudent.id));
 
     const cfg = getEffectiveStatusConfig(currentStudent.status);
+    let queueInfoHtml = '';
+    if (currentStudent.status === 'pending' && currentStudent.queue_position) {
+      const waitTime = currentStudent.estimated_wait_minutes ? ` • ~${currentStudent.estimated_wait_minutes}p` : '';
+      queueInfoHtml = ` <span style="font-size: 12px; font-weight: normal;">(Vị trí #${currentStudent.queue_position}${waitTime})</span>`;
+    }
     studentStatusDisplay.innerHTML = `
       <div class="status-badge ${cfg.badgeClass}">
         <span>${cfg.dot}</span>
-        <span>${cfg.label}${currentStudent.is_updating ? ' (Đang cập nhật ảnh...)' : ''}</span>
+        <span>${cfg.label}${queueInfoHtml}${currentStudent.is_updating ? ' (Đang cập nhật ảnh...)' : ''}</span>
       </div>
     `;
 
-    // Hiển thị chi tiết lỗi AI nếu có (error / manual_review)
-    if (
-      (currentStudent.status === 'error' || currentStudent.status === 'manual_review') &&
+    // Hiển thị chi tiết lỗi AI nếu có (error / manual_review / conflict_pending_review / failed_quota_exceeded)
+    if (currentStudent.status === 'manual_review' || currentStudent.status === 'conflict_pending_review') {
+      const detailMsg = currentStudent.last_error_message || 'Hồ sơ đang chờ Quản trị viên duyệt và mở khóa.';
+      studentErrorBox.innerHTML = `🟠 <strong>Hồ sơ đang chờ Quản trị viên duyệt và mở khóa.</strong><br>${detailMsg}`;
+      studentErrorBox.style.display = 'block';
+    } else if (
+      (currentStudent.status === 'error' || currentStudent.status === 'failed_quota_exceeded') &&
       (currentStudent.last_error_message || currentStudent.last_error_code)
     ) {
       const codeStr = currentStudent.last_error_code ? ` (Mã: ${currentStudent.last_error_code})` : '';
@@ -1477,8 +1510,8 @@
       studentErrorBox.style.display = 'none';
     }
 
-    // Hiển thị thông tin khi đã hoàn tất (success)
-    if (currentStudent.status === 'success') {
+    // Hiển thị thông tin khi đã hoàn tất (success / synced)
+    if (currentStudent.status === 'success' || currentStudent.status === 'synced') {
       const aliasInfo = currentStudent.alias_id ? `Mã định danh: ${currentStudent.alias_id}` : 'Đã ghi nhận trên hệ thống';
       studentSuccessBox.innerHTML = isTeacherVerified
         ? `✅ <strong>Học sinh đã đăng ký thành công</strong> (${aliasInfo}).<br>Giáo viên có thể chọn ảnh mới để cập nhật đè.`
@@ -1493,20 +1526,24 @@
       displayStudentExistingPhoto(currentStudent);
     }
 
-    // Khóa/Mở khu vực chụp ảnh nếu học sinh đã success và không phải Giáo viên
-    const lockPhotoInputs = currentStudent.status === 'success' && !isTeacherVerified;
+    // Khóa/Mở khu vực chụp ảnh nếu học sinh đã hoàn tất hoặc đang chờ duyệt
+    const lockPhotoInputs =
+      ((currentStudent.status === 'success' || currentStudent.status === 'synced') && !isTeacherVerified) ||
+      currentStudent.status === 'manual_review' ||
+      currentStudent.status === 'conflict_pending_review' ||
+      currentStudent.status === 'failed_quota_exceeded';
     photoGroup.style.opacity = lockPhotoInputs ? '0.6' : '1';
 
     submitBtn.textContent = cfg.btnText;
     contactAdminBtn.style.display = cfg.showSecondary ? 'block' : 'none';
     contactAdminBtn.textContent =
-      currentStudent.status === 'success' && !isTeacherVerified
+      (currentStudent.status === 'success' || currentStudent.status === 'synced') && !isTeacherVerified
         ? 'Yêu cầu đổi ảnh (Gửi Admin)'
         : 'Gửi admin';
 
     // Nếu vừa chuyển từ pending sang trạng thái cuối khi đang polling -> Báo kết quả rõ ràng
     if (isFromPolling && prevStatus === 'pending' && currentStudent.status !== 'pending') {
-      if (currentStudent.status === 'success') {
+      if (currentStudent.status === 'success' || currentStudent.status === 'synced') {
         showStatus('🎉 Chúc mừng! Khuôn mặt của bạn đã được AI nhận diện và đăng ký thành công!', true);
       } else {
         showStatus(
@@ -1534,18 +1571,62 @@
     onStudentSelectionChanged(false);
   });
 
+  async function pollStudentStatus() {
+    if (!currentStudent || (currentStudent.status !== 'pending' && !currentStudent.is_updating)) {
+      stopPolling();
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/students/${currentStudent.id}/status`);
+      if (!res.ok) return;
+      const statusData = await res.json();
+
+      const prevStatus = currentStudent.status;
+      currentStudent.status = statusData.status;
+      currentStudent.queue_position = statusData.queue_position;
+      currentStudent.estimated_wait_minutes = statusData.estimated_wait_minutes;
+      if (statusData.last_error_message) {
+        currentStudent.last_error_message = statusData.last_error_message;
+      }
+
+      // Cập nhật vào danh sách học sinh trong bộ nhớ để đồng bộ thống kê lớp
+      const matchedSt = studentsList.find(s => s.id === currentStudent.id);
+      if (matchedSt) {
+        matchedSt.status = statusData.status;
+        if (statusData.last_error_message) {
+          matchedSt.last_error_message = statusData.last_error_message;
+        }
+      }
+
+      if (statusData.status === 'pending') {
+        // Cập nhật trực tiếp huy hiệu hiển thị vị trí hàng đợi mà không tải lại toàn bộ lớp
+        const cfg = getEffectiveStatusConfig('pending');
+        const posText = statusData.queue_position ? ` (Vị trí #${statusData.queue_position} • ~${statusData.estimated_wait_minutes || 1}p)` : '';
+        studentStatusDisplay.innerHTML = `
+          <div class="status-badge ${cfg.badgeClass}">
+            <span>${cfg.dot}</span>
+            <span>${cfg.label}${posText}${currentStudent.is_updating ? ' (Đang cập nhật ảnh...)' : ''}</span>
+          </div>
+        `;
+      } else {
+        // Học sinh đã hoàn tất xử lý (success / error / manual_review)
+        renderClassStats(studentsList);
+        renderStudentOptions(studentSearchInput.value);
+        updateBatchProgressUI();
+        onStudentSelectionChanged(true);
+      }
+    } catch (pollErr) {
+      console.warn('[POLL STATUS ERROR]', pollErr);
+    }
+  }
+
   function startPolling() {
     pollingIndicator.style.display = 'block';
     if (pollingTimer) return;
-    pollingCount = 0;
     pollingTimer = setInterval(async () => {
       if (document.hidden) return;
-      pollingCount++;
-      if (pollingCount > 100) {
-        stopPolling();
-        return;
-      }
-      await loadStudents(true);
+      await pollStudentStatus();
     }, 3000);
   }
 

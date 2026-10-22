@@ -53,9 +53,16 @@ export function createClassLockGuard(
         }
       }
     } else if (params.qrToken && typeof studentRepo.findByQrToken === 'function') {
-      const student = await studentRepo.findByQrToken(params.qrToken);
-      if (student) {
-        classId = student.class_id;
+      try {
+        const student = await studentRepo.findByQrToken(params.qrToken);
+        if (student) {
+          classId = student.class_id;
+        }
+      } catch {
+        const fallbackStudent = await studentRepo.findByAliasId(params.qrToken);
+        if (fallbackStudent) {
+          classId = fallbackStudent.class_id;
+        }
       }
     }
 

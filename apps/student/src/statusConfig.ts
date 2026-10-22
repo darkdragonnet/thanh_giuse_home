@@ -29,7 +29,7 @@ export interface StatusUIConfig {
  *   + Học sinh (không có PIN): Nút chính: Disabled ("Đã hoàn tất đăng ký") | Nút phụ: Yêu cầu đổi ảnh (Gửi Admin).
  *   + Giáo viên (có PIN hợp lệ): Nút chính: Enabled ("Cập nhật hình") | Nút phụ: Gửi admin.
  * - error / failed_quota_exceeded (🔴 Đỏ): Nút chính: Enabled ("Thử đăng ký lại") | Nút phụ: Gửi admin.
- * - manual_review / conflict_pending_review (🟠 Cam): Nút chính: Enabled ("Nộp lại ảnh khác") | Nút phụ: Gửi admin.
+ * - manual_review / conflict_pending_review (🟠 Cam): Nút chính: Disabled ("Đang chờ admin duyệt") | Nút phụ: Gửi admin.
  */
 export const STATUS_UI_CONFIG: Record<StudentStatus, StatusUIConfig> = {
   empty: {
@@ -162,9 +162,9 @@ export const STATUS_UI_CONFIG: Record<StudentStatus, StatusUIConfig> = {
       border: '#fdba74',
     },
     primaryButton: {
-      text: 'Nộp lại ảnh khác',
-      disabled: false,
-      action: 'REGISTER',
+      text: 'Đang chờ admin duyệt',
+      disabled: true,
+      action: 'NONE',
     },
     secondaryButton: {
       visible: true,

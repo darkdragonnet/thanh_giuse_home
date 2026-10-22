@@ -24,6 +24,7 @@ import { AdminRequestRepository } from './repositories/admin-request.repository.
 import { adminRoutes } from './routes/admin.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { giatruongRoutes } from './routes/giatruong.js';
+import { statusRoutes } from './routes/status.js';
 
 const { Pool } = pg;
 const __filename = fileURLToPath(import.meta.url);
@@ -131,6 +132,9 @@ await server.register(adminRoutes, { prefix: '/api/admin' });
 
 // Đăng ký Webhook Receiver (/api/webhooks/*)
 await server.register(webhookRoutes, { prefix: '/api/webhooks' });
+
+// Đăng ký Route Tra cứu Trạng thái & Hàng đợi (/api/students/:id/status - T024)
+await server.register(statusRoutes);
 
 // =============================================================================
 // HỆ THỐNG BỎ PHIẾU BAN ĐẠI DIỆN GIA TRƯỞNG (MODULE MƯỢN DOCKER SERVICE)
@@ -501,7 +505,17 @@ server.get<{ Params: { qrToken: string } }>(
   },
   async (request, reply) => {
     const qrToken = request.params.qrToken.trim();
-    const student = await studentRepo.findByQrToken(qrToken);
+    let student: any = null;
+    try {
+      student = await studentRepo.findByQrToken(qrToken);
+    } catch (err: any) {
+      if (err?.code === '42703') {
+        student = await studentRepo.findByAliasId(qrToken);
+      } else {
+        throw err;
+      }
+    }
+
     if (!student) {
       return reply.status(404).send({
         error: 'Not Found',
@@ -510,9 +524,23 @@ server.get<{ Params: { qrToken: string } }>(
     }
 
     const classRecord = await classRepo.findById(student.class_id);
+    // Thu hẹp payload bảo mật theo Phần E (loại bỏ local_image_path, person_id, normalized_name, cloud_alias_synced, retry_count)
+    const narrowedStudent = {
+      id: student.id,
+      class_id: student.class_id,
+      name: student.name,
+      alias_id: student.alias_id,
+      status: student.status,
+      qr_token: student.qr_token || student.alias_id,
+      face_url: student.face_url || null,
+      last_error_code: student.last_error_code || null,
+      last_error_message: student.last_error_message || null,
+      is_updating: Boolean(student.is_updating),
+    };
+
     return reply.status(200).send({
       success: true,
-      student,
+      student: narrowedStudent,
       classInfo: classRecord
         ? { id: classRecord.id, code: classRecord.code, name: classRecord.name }
         : null,
@@ -581,10 +609,40 @@ server.post<{ Params: { qrToken: string } }>(
     await fs.promises.writeFile(filePath, finalBuffer);
 
     // Atomic Lock Luồng 2: Cho phép cả học sinh đã 'success' tự cập nhật ảnh (is_updating = TRUE)
-    const claimResult = await studentRepo.claimStudentForTokenSelfService(qrToken, filePath);
+    let claimResult: any = null;
+    try {
+      claimResult = await studentRepo.claimStudentForTokenSelfService(qrToken, filePath);
+    } catch (err: any) {
+      if (err?.code === '42703') {
+        // Fallback schema cũ (chưa có cột qr_token)
+        const updateRes = await pool.query(
+          `UPDATE students
+           SET status = 'pending', local_image_path = $1, retry_count = 0, updated_at = NOW()
+           WHERE alias_id = $2 AND status IN ('empty', 'error')
+           RETURNING *;`,
+          [filePath, qrToken]
+        );
+        if (updateRes.rows[0]) {
+          claimResult = { student: updateRes.rows[0], mode: 'REGISTER' };
+        }
+      } else {
+        throw err;
+      }
+    }
+
     if (!claimResult) {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-      const existing = await studentRepo.findByQrToken(qrToken);
+      let existing: any = null;
+      try {
+        existing = await studentRepo.findByQrToken(qrToken);
+      } catch (err: any) {
+        if (err?.code === '42703') {
+          existing = await studentRepo.findByAliasId(qrToken);
+        } else {
+          throw err;
+        }
+      }
+
       if (!existing) {
         return reply.status(404).send({
           error: 'Not Found',

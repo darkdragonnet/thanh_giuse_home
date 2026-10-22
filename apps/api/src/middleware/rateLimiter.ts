@@ -50,10 +50,18 @@ export function createRateLimiter(options: RateLimiterOptions) {
         if (student) classId = student.class_id;
       }
     } else if (params.qrToken && typeof studentRepo.findByQrToken === 'function') {
-      const student = await studentRepo.findByQrToken(params.qrToken.trim());
-      if (student) {
-        targetStudentId = student.id;
-        classId = student.class_id;
+      try {
+        const student = await studentRepo.findByQrToken(params.qrToken.trim());
+        if (student) {
+          targetStudentId = student.id;
+          classId = student.class_id;
+        }
+      } catch {
+        const fallbackStudent = await studentRepo.findByAliasId(params.qrToken.trim());
+        if (fallbackStudent) {
+          targetStudentId = fallbackStudent.id;
+          classId = fallbackStudent.class_id;
+        }
       }
     } else if (params.classId || params.classCode) {
       const rawClass = (params.classId || params.classCode || '').trim();
