@@ -451,6 +451,39 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({ success: true, data: result });
     });
 
+    // 5b. GET /api/admin/students/manual-review (Lấy danh sách học sinh cần rà soát thủ công - contracts/admin-api.yaml)
+    protectedRoutes.get('/students/manual-review', async (req, reply) => {
+      const query = req.query as { class_code?: string; class_id?: string; class?: string };
+      const classFilter = query.class_code || query.class || (query.class_id ? String(query.class_id) : undefined);
+
+      let sql = `
+        SELECT 
+          s.id,
+          s.alias_id,
+          s.name,
+          COALESCE(c.code, '') AS class_code,
+          s.status,
+          s.retry_count,
+          s.last_error_code,
+          s.last_error_message,
+          s.created_at
+        FROM students s
+        LEFT JOIN classes c ON s.class_id = c.id
+        WHERE s.status = 'manual_review'
+      `;
+      const params: any[] = [];
+
+      if (classFilter) {
+        params.push(classFilter);
+        sql += ` AND (c.code = $1 OR c.id::text = $1)`;
+      }
+
+      sql += ` ORDER BY s.id DESC`;
+
+      const result = await fastify.pg.query(sql, params);
+      return reply.send(result.rows);
+    });
+
     // 6. POST /api/admin/students/:id/override (Đẩy BullMQ job priority = 1)
     protectedRoutes.post('/students/:id/override', async (req, reply) => {
       const { id } = req.params as { id: string };
@@ -530,7 +563,11 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       const studentId = Number(id);
       const student = await studentRepo.findById(studentId);
       if (!student) {
-        return reply.status(404).send({ success: false, message: 'Không tìm thấy học sinh để mở khóa' });
+        return reply.status(404).send({
+          statusCode: 404,
+          error: 'Not Found',
+          message: 'Không tìm thấy học sinh với ID tương ứng',
+        });
       }
 
       // Micro-fix unlock guard: Chỉ cho phép mở khóa khi hồ sơ đang ở trạng thái manual_review
@@ -542,11 +579,46 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const success = await studentRepo.resetStudentStatus(studentId);
-      if (!success) {
-        return reply.status(404).send({ success: false, message: 'Không tìm thấy học sinh để mở khóa' });
+      const body = (req.body || {}) as { target_status?: string; note?: string };
+      const targetStatus = body.target_status || 'empty';
+
+      if (!['empty', 'error'].includes(targetStatus)) {
+        return reply.status(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'target_status không hợp lệ (chỉ chấp nhận empty hoặc error)',
+        });
       }
-      return reply.send({ success: true, message: 'Đã mở khóa hồ sơ học sinh về trạng thái empty.' });
+
+      const note = typeof body.note === 'string' ? body.note.trim() : '';
+
+      // Cập nhật trạng thái trong database
+      await fastify.pg.query(
+        `UPDATE students 
+         SET status = $1, local_image_path = NULL, last_error_code = NULL, last_error_message = NULL, retry_count = 0, updated_at = NOW() 
+         WHERE id = $2`,
+        [targetStatus, studentId]
+      );
+
+      // Audit Logging vào bảng logs
+      const ip = req.ip || (req.headers['x-forwarded-for'] as string) || null;
+      await logRepo.recordLog({
+        student_id: student.id,
+        class_id: student.class_id,
+        alias_id: student.alias_id,
+        action: 'UNLOCK_STUDENT',
+        result_code: '1',
+        result_message: `Admin mở khóa hồ sơ (manual_review -> ${targetStatus})${note ? `: ${note}` : ''}`,
+        ip,
+      });
+
+      return reply.status(200).send({
+        success: true,
+        student_id: student.id,
+        previous_status: 'manual_review',
+        current_status: targetStatus,
+        message: 'Đã mở khóa hồ sơ thành công. Học sinh có thể tiến hành nộp lại ảnh.',
+      });
     });
 
     // 7.1. PUT /api/admin/students/:id (Cập nhật họ tên học sinh)

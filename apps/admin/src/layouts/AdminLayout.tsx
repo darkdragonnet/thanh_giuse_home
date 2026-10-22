@@ -6,7 +6,9 @@ import { StudentsTab } from '../components/students/StudentsTab';
 import { RequestsTab } from '../components/requests/RequestsTab';
 import { LogsTab } from '../components/logs/LogsTab';
 import { CloudFaceInspectorTab } from '../components/hanet/CloudFaceInspectorTab';
-import { LayoutDashboard, Users, UserCheck, Inbox, ScrollText, LogOut, Cloud } from 'lucide-react';
+import { ManualReviewApproval } from '../pages/ManualReviewApproval';
+import { SystemSettings } from '../pages/SystemSettings';
+import { LayoutDashboard, Users, UserCheck, Inbox, ScrollText, LogOut, Cloud, ShieldAlert, Settings } from 'lucide-react';
 
 export const AdminLayout: React.FC = () => {
   const { logout } = useAuth();
@@ -16,9 +18,11 @@ export const AdminLayout: React.FC = () => {
     { id: 'dashboard', label: 'Tổng quan', icon: LayoutDashboard },
     { id: 'classes', label: 'Lớp học', icon: Users },
     { id: 'students', label: 'Học sinh', icon: UserCheck },
+    { id: 'manual_review', label: 'Rà soát thủ công', icon: ShieldAlert },
     { id: 'cloud_faces', label: 'Face ID Cloud', icon: Cloud },
     { id: 'requests', label: 'Yêu cầu xử lý', icon: Inbox },
-    { id: 'logs', label: 'Nhật ký & Cài đặt', icon: ScrollText },
+    { id: 'settings', label: 'Cài đặt', icon: Settings },
+    { id: 'logs', label: 'Nhật ký', icon: ScrollText },
   ];
 
   return (
@@ -67,8 +71,10 @@ export const AdminLayout: React.FC = () => {
         {activeTab === 'dashboard' && <DashboardTab />}
         {activeTab === 'classes' && <ClassesTab />}
         {activeTab === 'students' && <StudentsTab />}
+        {activeTab === 'manual_review' && <ManualReviewApproval />}
         {activeTab === 'cloud_faces' && <CloudFaceInspectorTab />}
         {activeTab === 'requests' && <RequestsTab />}
+        {activeTab === 'settings' && <SystemSettings />}
         {activeTab === 'logs' && <LogsTab />}
       </main>
     </div>

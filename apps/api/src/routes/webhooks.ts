@@ -1,5 +1,17 @@
 import { FastifyPluginAsync } from 'fastify';
 import crypto from 'node:crypto';
+import type { Redis } from 'ioredis';
+import type { Pool } from 'pg';
+import type { SettingsRepository, LogRepository } from '@thanh-giuse/shared-infra';
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    settingsRepo: SettingsRepository;
+    logRepo: LogRepository;
+    redis: Redis;
+    pg: Pool;
+  }
+}
 
 /**
  * Kiểm tra tính hợp lệ của Webhook bằng chuỗi Hash MD5
@@ -25,7 +37,49 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(400).send({ returnCode: -1, message: 'INVALID_HASH' });
     }
 
-    // 2. Xử lý sự kiện Face Data / Nhân sự (data_type = 'person')
+    // 2. Kiểm tra Kill Switch (nếu Kill Switch đang ngắt -> hoãn xử lý, ghi WEBHOOK_DEFERRED, trả 200 SUCCESS)
+    const isRegistrationEnabled = await fastify.settingsRepo.isRegistrationEnabled();
+    const killSwitchRedis = await fastify.redis.get('setting:kill_switch');
+    const isKillSwitchActive = !isRegistrationEnabled || killSwitchRedis === 'true';
+
+    if (isKillSwitchActive) {
+      const payloadSummary = JSON.stringify({
+        data_type: payload?.data_type,
+        action_type: payload?.action_type,
+        personID: payload?.personID,
+        aliasID: payload?.aliasID,
+        personName: payload?.personName,
+      });
+
+      let studentId: number | undefined;
+      let classId: number | undefined;
+      if (payload?.aliasID || payload?.personID) {
+        const studentRes = await fastify.pg.query(
+          'SELECT id, class_id FROM students WHERE alias_id = $1 OR person_id = $2 LIMIT 1',
+          [payload?.aliasID || null, payload?.personID || null]
+        );
+        if (studentRes.rows.length > 0) {
+          studentId = studentRes.rows[0].id;
+          classId = studentRes.rows[0].class_id;
+        }
+      }
+
+      const ip = request.ip || (request.headers['x-forwarded-for'] as string) || null;
+      await fastify.logRepo.recordLog({
+        student_id: studentId,
+        class_id: classId,
+        alias_id: payload?.aliasID || null,
+        action: 'WEBHOOK_DEFERRED',
+        result_code: '1',
+        result_message: `Webhook deferred do Kill Switch đang ngắt bảo trì. Payload: ${payloadSummary}`,
+        ip,
+      });
+
+      request.log.info({ payload }, '[Webhook] Kill Switch active - Webhook deferred');
+      return reply.status(200).send({ returnCode: 1, message: 'SUCCESS' });
+    }
+
+    // 3. Xử lý sự kiện Face Data / Nhân sự (data_type = 'person')
     if (payload?.data_type === 'person') {
       const { action_type, personID, aliasID, personName } = payload;
       request.log.info(

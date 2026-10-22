@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../../api/client';
-import * as Dialog from '@radix-ui/react-dialog';
-import { ShieldAlert, Download, Search, AlertOctagon } from 'lucide-react';
+import { ShieldAlert, Download, Search } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 
 interface LogItem {
@@ -21,7 +20,6 @@ export const LogsTab: React.FC = () => {
   const [action, setAction] = useState('');
   const [search, setSearch] = useState('');
   const [isMaintenance, setIsMaintenance] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
 
   const fetchLogs = async () => {
     try {
@@ -54,17 +52,6 @@ export const LogsTab: React.FC = () => {
     fetchSettings();
   }, []);
 
-  const handleToggleKillSwitch = async () => {
-    try {
-      const newEnabled = isMaintenance; // Nếu đang bảo trì -> mở lại (true)
-      await apiClient.post('/settings/kill-switch', { enabled: newEnabled });
-      setIsMaintenance(!isMaintenance);
-      setShowConfirm(false);
-    } catch {
-      alert('Không thể thay đổi cờ bảo trì');
-    }
-  };
-
   const exportLogsCSV = () => {
     let csv = 'Thời gian,AliasID,Lớp,Action,Result Code,Thông điệp,IP\n';
     logs.forEach(l => {
@@ -82,30 +69,23 @@ export const LogsTab: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* 1. Global Kill Switch Card */}
-      <div className={`rounded-xl border p-5 shadow-sm transition ${
+      {/* 1. Global Kill Switch Status (Read-Only Status Line) */}
+      <div className={`rounded-xl border p-4 shadow-sm transition ${
         isMaintenance ? 'border-red-200 bg-red-50/50' : 'border-gray-200 bg-white'
       }`}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-start gap-3">
-            <ShieldAlert className={`h-6 w-6 shrink-0 ${isMaintenance ? 'text-red-600' : 'text-gray-400'}`} />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <ShieldAlert className={`h-5 w-5 shrink-0 ${isMaintenance ? 'text-red-600' : 'text-emerald-600'}`} />
             <div>
-              <h4 className="font-bold text-gray-900">Chốt chặn Khẩn cấp Toàn trường (Global Kill Switch)</h4>
-              <p className="mt-1 text-xs text-gray-500">
-                Khi bật chế độ bảo trì, hệ thống sẽ từ chối nộp ảnh trên toàn bộ các link lớp học. Các tiến trình đang trong BullMQ vẫn tiếp tục xử lý nốt.
-              </p>
+              <span className="font-bold text-gray-900 text-xs">Trạng thái Cổng Tiếp Nhận: </span>
+              <span className={`text-xs font-semibold ${isMaintenance ? 'text-red-700' : 'text-emerald-700'}`}>
+                {isMaintenance ? 'Đang tạm dừng bảo trì (Kill Switch BẬT)' : 'Đang mở tiếp nhận bình thường'}
+              </span>
             </div>
           </div>
-          <button
-            onClick={() => setShowConfirm(true)}
-            className={`rounded-lg px-4 py-2 text-xs font-bold transition ${
-              isMaintenance
-                ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                : 'bg-red-600 text-white hover:bg-red-700'
-            }`}
-          >
-            {isMaintenance ? 'Mở lại Tiếp nhận' : 'Kích hoạt Bảo trì'}
-          </button>
+          <span className="text-[11px] text-gray-500 italic">
+            * Nút gạt điều khiển Kill Switch tập trung tại tab "Cài đặt"
+          </span>
         </div>
       </div>
 
@@ -132,6 +112,8 @@ export const LogsTab: React.FC = () => {
             <option value="UPDATE_PHOTO">UPDATE_PHOTO</option>
             <option value="MANUAL_OVERRIDE">MANUAL_OVERRIDE</option>
             <option value="RETRY">RETRY</option>
+            <option value="UNLOCK_STUDENT">UNLOCK_STUDENT</option>
+            <option value="WEBHOOK_DEFERRED">WEBHOOK_DEFERRED</option>
           </select>
         </div>
         <button
@@ -163,7 +145,7 @@ export const LogsTab: React.FC = () => {
                 <td className="px-4 py-2.5 text-gray-500">
                   {format(parseISO(log.created_at), 'HH:mm:ss dd/MM')}
                 </td>
-                <td className="px-4 py-2.5 font-bold text-gray-800">{log.alias_id}</td>
+                <td className="px-4 py-2.5 font-bold text-gray-800">{log.alias_id || '—'}</td>
                 <td className="px-4 py-2.5 text-gray-600">{log.class_code || '—'}</td>
                 <td className="px-4 py-2.5">
                   <span className="rounded bg-gray-100 px-2 py-0.5 font-semibold text-gray-700">
@@ -175,10 +157,10 @@ export const LogsTab: React.FC = () => {
                     {log.result_code}
                   </span>
                 </td>
-                <td className="px-4 py-2.5 font-sans text-gray-600 max-w-xs truncate">
+                <td className="px-4 py-2.5 font-sans text-gray-600 max-w-xs truncate" title={log.result_message || ''}>
                   {log.result_message}
                 </td>
-                <td className="px-4 py-2.5 text-gray-400">{log.ip}</td>
+                <td className="px-4 py-2.5 text-gray-400">{log.ip || '—'}</td>
               </tr>
             ))}
           </tbody>
@@ -205,40 +187,6 @@ export const LogsTab: React.FC = () => {
           </button>
         </div>
       </div>
-
-      {/* Confirm Dialog */}
-      <Dialog.Root open={showConfirm} onOpenChange={setShowConfirm}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 shadow-2xl">
-            <div className="flex items-center gap-3 text-red-600">
-              <AlertOctagon className="h-6 w-6 shrink-0" />
-              <Dialog.Title className="text-lg font-bold">
-                Xác nhận thay đổi chế độ hệ thống
-              </Dialog.Title>
-            </div>
-            <Dialog.Description className="mt-3 text-sm text-gray-600">
-              {isMaintenance
-                ? 'Bạn có chắc chắn muốn TẮT BẢO TRÌ và mở lại toàn bộ cổng nộp ảnh cho học sinh?'
-                : 'CẢNH BÁO: Bật chế độ bảo trì sẽ chặn học sinh toàn trường nộp ảnh mới ngay lập tức.'}
-            </Dialog.Description>
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                onClick={() => setShowConfirm(false)}
-                className="rounded-lg bg-gray-100 px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-200"
-              >
-                Hủy
-              </button>
-              <button
-                onClick={handleToggleKillSwitch}
-                className="rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700"
-              >
-                Xác nhận thực hiện
-              </button>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
     </div>
   );
 };
