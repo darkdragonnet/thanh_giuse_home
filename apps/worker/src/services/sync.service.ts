@@ -1,4 +1,5 @@
 import { Pool } from 'pg';
+import { generateStudentQrToken } from '@thanh-giuse/shared-infra';
 
 export interface CloudPersonSyncItem {
   personID: string;
@@ -45,6 +46,7 @@ export async function syncCloudPersonsToStudentsBatch(
       const personIds: string[] = [];
       const faceUrls: string[] = [];
       const statuses: string[] = [];
+      const qrTokens: string[] = [];
 
       for (const p of chunk) {
         if (!p.aliasID) continue;
@@ -62,6 +64,7 @@ export async function syncCloudPersonsToStudentsBatch(
         personIds.push(p.personID || '');
         faceUrls.push(p.avatar || '');
         statuses.push(initialStatus);
+        qrTokens.push(generateStudentQrToken());
 
         if (!mappedClassId) {
           conflictsCount++;
@@ -79,7 +82,7 @@ export async function syncCloudPersonsToStudentsBatch(
       if (aliasIds.length > 0) {
         const bulkQuery = `
           INSERT INTO students (
-            class_id, name, alias_id, person_id, face_url, status, retry_count, last_error_code, last_error_message, updated_at
+            class_id, name, alias_id, person_id, face_url, status, retry_count, last_error_code, last_error_message, updated_at, qr_token
           )
           SELECT 
             u.class_id,
@@ -91,15 +94,17 @@ export async function syncCloudPersonsToStudentsBatch(
             0,
             NULL,
             NULL,
-            NOW()
+            NOW(),
+            u.qr_token
           FROM UNNEST(
             $1::int[],
             $2::text[],
             $3::text[],
             $4::text[],
             $5::text[],
-            $6::text[]
-          ) AS u(class_id, name, alias_id, person_id, face_url, status)
+            $6::text[],
+            $7::text[]
+          ) AS u(class_id, name, alias_id, person_id, face_url, status, qr_token)
           ON CONFLICT (alias_id) DO UPDATE SET
             person_id = EXCLUDED.person_id,
             face_url = EXCLUDED.face_url,
@@ -117,7 +122,7 @@ export async function syncCloudPersonsToStudentsBatch(
             updated_at = NOW();
         `;
 
-        await client.query(bulkQuery, [classIds, names, aliasIds, personIds, faceUrls, statuses]);
+        await client.query(bulkQuery, [classIds, names, aliasIds, personIds, faceUrls, statuses, qrTokens]);
         totalSynced += aliasIds.length;
       }
 
