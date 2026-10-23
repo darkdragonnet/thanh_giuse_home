@@ -4,6 +4,7 @@ import path from 'node:path';
 import pg from 'pg';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
+import { generateStudentQrToken } from '@thanh-giuse/shared-infra';
 
 const { Pool } = pg;
 const API_BASE = process.env.API_BASE || 'http://localhost:3000';
@@ -14,28 +15,45 @@ const REDIS_URL =
   process.env.REDIS_URL ||
   'redis://:super_secure_redis_password_change_me@localhost:6379/0';
 
-const TEACHER_PIN = 'PIN_10A2_SECRET_456'; // Token của lớp 2 (10A2)
-
 describe('T017: Concurrency & Duplicate Registration Control (FR-004 & Principle III)', () => {
   let pool: pg.Pool;
   let redis: IORedis;
   let queue: Queue;
   let createdStudentIds: number[] = [];
+  let testClassId: number;
+  let testClassCode: string;
+  let testTeacherPin: string;
   const jpegBuffer = fs.readFileSync(path.resolve('tests/fixtures/sample_face.jpg'));
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: DB_URL });
     redis = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
     queue = new Queue('registration_queue', { connection: redis });
+
+    const uniqueSuffix = Date.now().toString().slice(-4);
+    testClassCode = `TC${uniqueSuffix}`;
+    testTeacherPin = `PIN_CONC_${uniqueSuffix}`;
+
+    const clsRes = await pool.query(
+      `INSERT INTO classes (code, name, token, is_locked)
+       VALUES ($1, $2, $3, false)
+       RETURNING id`,
+      [testClassCode, `Lớp Test Concurrency ${testClassCode}`, testTeacherPin]
+    );
+    testClassId = clsRes.rows[0].id;
   });
 
   afterAll(async () => {
-    // Dọn dẹp tuyệt đối mọi học sinh test dùng một lần (KHÔNG đụng vào 196 học sinh thật)
+    // Dọn dẹp tuyệt đối mọi học sinh test dùng một lần (KHÔNG đụng vào dữ liệu thật)
     await pool.query("DELETE FROM logs WHERE alias_id LIKE 'TEST_CONC_%'");
     if (createdStudentIds.length > 0) {
       await pool.query('DELETE FROM students WHERE id = ANY($1::int[])', [createdStudentIds]);
     }
     await pool.query("DELETE FROM students WHERE alias_id LIKE 'TEST_CONC_%'");
+    if (testClassId) {
+      await pool.query('DELETE FROM students WHERE class_id = $1', [testClassId]);
+      await pool.query('DELETE FROM classes WHERE id = $1', [testClassId]);
+    }
     await queue.close();
     await redis.quit();
     await pool.end();
@@ -48,14 +66,17 @@ describe('T017: Concurrency & Duplicate Registration Control (FR-004 & Principle
     const uniqueSuffix = `${Date.now()}_${Math.floor(Math.random() * 100000)}`;
     const aliasId = `TEST_CONC_${uniqueSuffix}`;
     const name = `Test Student Conc ${uniqueSuffix}`;
+    const qrToken = generateStudentQrToken();
 
     const res = await pool.query(
-      `INSERT INTO students (class_id, name, alias_id, status, person_id, face_url)
-       VALUES (2, $1, $2, $3, $4, $5)
+      `INSERT INTO students (class_id, name, alias_id, qr_token, status, person_id, face_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, alias_id, status`,
       [
+        testClassId,
         name,
         aliasId,
+        qrToken,
         initialStatus,
         initialStatus === 'success' ? `PERSON_${uniqueSuffix}` : null,
         initialStatus === 'success' ? `https://example.com/face_${uniqueSuffix}.jpg` : null,
@@ -191,7 +212,7 @@ describe('T017: Concurrency & Duplicate Registration Control (FR-004 & Principle
     const student = await createTestStudent('success');
 
     const res = await sendPhotoUpload(student.id, {
-      teacherPin: TEACHER_PIN,
+      teacherPin: testTeacherPin,
       fakeIp: '10.88.99.1',
     });
 

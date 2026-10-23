@@ -10,6 +10,7 @@ import {
   SettingsRepository,
   createDbPool,
   closeDbPool,
+  generateStudentQrToken,
 } from '@thanh-giuse/shared-infra';
 import { HanetClient } from '@thanh-giuse/hanet-client';
 import { processRegistrationJob } from '../apps/worker/src/processor.js';
@@ -26,13 +27,16 @@ const REDIS_URL =
   'redis://:super_secure_redis_password_change_me@localhost:6379/0';
 const ADMIN_SECRET_TOKEN = process.env.ADMIN_SECRET_TOKEN || 'admin_secret_super_secure_token';
 
+let testClassId: number;
+let testClassCode: string;
+
 function generateTestAlias(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let suffix = '';
   for (let i = 0; i < 4; i++) {
     suffix += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  return `TS1A_${suffix}`;
+  return `${testClassCode}_${suffix}`;
 }
 
 describe('T026: Kill Switch -103 Protocol & Queue Auto-Recovery (US5-P0)', () => {
@@ -56,6 +60,17 @@ describe('T026: Kill Switch -103 Protocol & Queue Auto-Recovery (US5-P0)', () =>
     logRepo = new LogRepository(pool);
     settingsRepo = new SettingsRepository(pool);
 
+    const uniqueSuffix = Date.now().toString().slice(-2);
+    testClassCode = `KS${uniqueSuffix}`;
+
+    const clsRes = await pool.query(
+      `INSERT INTO classes (code, name, token, is_locked)
+       VALUES ($1, $2, $3, false)
+       RETURNING id`,
+      [testClassCode, `Lớp Test 103 ${testClassCode}`, `PIN_KS_${uniqueSuffix}`]
+    );
+    testClassId = clsRes.rows[0].id;
+
     hanetClient = new HanetClient({
       baseUrl: MOCK_API_BASE,
       token: 'mock_token',
@@ -73,11 +88,15 @@ describe('T026: Kill Switch -103 Protocol & Queue Auto-Recovery (US5-P0)', () =>
 
   afterAll(async () => {
     // Dọn dẹp dữ liệu TEST_ dùng một lần
-    await pool.query("DELETE FROM logs WHERE alias_id LIKE 'TEST_T026_%'");
+    await pool.query("DELETE FROM logs WHERE alias_id LIKE 'KS%' OR alias_id LIKE 'TEST_T026_%'");
     if (createdStudentIds.length > 0) {
       await pool.query('DELETE FROM students WHERE id = ANY($1::int[])', [createdStudentIds]);
     }
-    await pool.query("DELETE FROM students WHERE alias_id LIKE 'TEST_T026_%'");
+    await pool.query("DELETE FROM students WHERE alias_id LIKE 'KS%' OR alias_id LIKE 'TEST_T026_%'");
+    if (testClassId) {
+      await pool.query('DELETE FROM students WHERE class_id = $1', [testClassId]);
+      await pool.query('DELETE FROM classes WHERE id = $1', [testClassId]);
+    }
 
     // Xóa file ảnh mẫu test
     if (fs.existsSync(testImagePath)) {
@@ -112,11 +131,12 @@ describe('T026: Kill Switch -103 Protocol & Queue Auto-Recovery (US5-P0)', () =>
     // 1. Tạo học sinh TEST_ ở trạng thái pending
     const suffix = `${Date.now()}_${Math.floor(Math.random() * 1000)}`;
     const aliasId = generateTestAlias();
+    const qrToken = generateStudentQrToken();
     const studentRes = await pool.query(
-      `INSERT INTO students (class_id, name, alias_id, status, local_image_path)
-       VALUES (2, $1, $2, 'pending', $3)
+      `INSERT INTO students (class_id, name, alias_id, qr_token, status, local_image_path)
+       VALUES ($1, $2, $3, $4, 'pending', $5)
        RETURNING id, alias_id, name`,
-      [`Test 103 Student ${suffix}`, aliasId, testImagePath]
+      [testClassId, `Test 103 Student ${suffix}`, aliasId, qrToken, testImagePath]
     );
     const testStudent = studentRes.rows[0];
     createdStudentIds.push(testStudent.id);
@@ -140,7 +160,7 @@ describe('T026: Kill Switch -103 Protocol & Queue Auto-Recovery (US5-P0)', () =>
         studentId: testStudent.id,
         aliasId,
         studentName: testStudent.name,
-        classCode: '10A2',
+        classCode: testClassCode,
         tempFilename: path.basename(testImagePath),
         uploadedAt: Date.now(),
         actionType: 'REGISTER' as const,

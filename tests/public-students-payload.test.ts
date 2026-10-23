@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
+import { generateStudentQrToken } from '@thanh-giuse/shared-infra';
 
 const { Pool } = pg;
 const API_BASE = process.env.API_BASE || 'http://localhost:3000';
@@ -44,14 +45,15 @@ describe('P0 Security: Narrowing Public Payload of Class Students Endpoint', () 
     // 2. Tạo học sinh test dùng-một-lần với ĐẦY ĐỦ các trường nhạy cảm để kiểm chứng lọc payload
     const stuRes = await pool.query(
       `INSERT INTO students (
-        class_id, name, alias_id, status, person_id,
+        class_id, name, alias_id, qr_token, status, person_id,
         face_url, local_image_path, last_error_code, last_error_message, retry_count
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING id`,
       [
         testClassId,
         'TEST_ Học Sinh Nhạy Cảm',
         testAliasId,
+        generateStudentQrToken(),
         'error',
         'TEST_PERSON_998877',
         'https://static.hanet.ai/face/employee/test/secret_child_face.jpg',

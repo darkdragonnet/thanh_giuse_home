@@ -10,6 +10,7 @@ import {
   SettingsRepository,
   createDbPool,
   closeDbPool,
+  generateStudentQrToken,
 } from '@thanh-giuse/shared-infra';
 import { HanetClient } from '@thanh-giuse/hanet-client';
 import { processRegistrationJob } from '../apps/worker/src/processor.js';
@@ -122,18 +123,18 @@ describe('T033: End-to-End Registration Pipeline against Mock HANET (Phase 8)', 
 
     // 2. Tạo 2 học sinh test dùng-một-lần ở trạng thái 'empty'
     const s1Res = await pool.query(
-      `INSERT INTO students (class_id, name, alias_id, status)
-       VALUES ($1, $2, $3, 'empty')
+      `INSERT INTO students (class_id, name, alias_id, qr_token, status)
+       VALUES ($1, $2, $3, $4, 'empty')
        RETURNING id`,
-      [testClassId, student1Name, student1Alias]
+      [testClassId, student1Name, student1Alias, generateStudentQrToken()]
     );
     student1Id = s1Res.rows[0].id;
 
     const s2Res = await pool.query(
-      `INSERT INTO students (class_id, name, alias_id, status)
-       VALUES ($1, $2, $3, 'empty')
+      `INSERT INTO students (class_id, name, alias_id, qr_token, status)
+       VALUES ($1, $2, $3, $4, 'empty')
        RETURNING id`,
-      [testClassId, student2Name, student2Alias]
+      [testClassId, student2Name, student2Alias, generateStudentQrToken()]
     );
     student2Id = s2Res.rows[0].id;
   });
@@ -279,7 +280,7 @@ describe('T033: End-to-End Registration Pipeline against Mock HANET (Phase 8)', 
     expect(s1Public).toBeDefined();
     expect(s1Public.id).toBe(student1Id);
     expect(s1Public.name).toBe(student1Name);
-    expect(s1Public.alias_id).toBe(student1Alias);
+    expect(s1Public.alias_id).toBe(student1Success?.alias_id);
     expect(s1Public.status).toBe('success');
 
     // Khẳng định tuyệt đối 10 trường nhạy cảm không xuất hiện trong public roster

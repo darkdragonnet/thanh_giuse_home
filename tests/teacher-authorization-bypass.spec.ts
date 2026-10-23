@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
+import { generateStudentQrToken } from '@thanh-giuse/shared-infra';
 
 const { Pool } = pg;
 const API_BASE = process.env.API_BASE || 'http://localhost:3000';
@@ -35,10 +36,10 @@ describe('T020: Teacher Authorization & Rate-Limit Bypass (US2 Independent Test)
       const aliasId = `TB_${uniqueClassCode.slice(-2)}_${i.toString().padStart(4, '0')}`;
       const name = `Học sinh Test Batch ${i}`;
       const stuRes = await pool.query(
-        `INSERT INTO students (class_id, name, alias_id, status)
-         VALUES ($1, $2, $3, 'empty')
+        `INSERT INTO students (class_id, name, alias_id, qr_token, status)
+         VALUES ($1, $2, $3, $4, 'empty')
          RETURNING id`,
-        [testClassId, name, aliasId]
+        [testClassId, name, aliasId, generateStudentQrToken()]
       );
       testStudentIds.push(stuRes.rows[0].id);
     }
@@ -120,10 +121,10 @@ describe('T020: Teacher Authorization & Rate-Limit Bypass (US2 Independent Test)
     it('PIN SAI: Bị tính vào giới hạn học sinh (Student Rate Limit: quá 3 lần/15 phút bị chặn 429)', async () => {
       // Tạo thêm 1 học sinh test riêng để kiểm tra rate limit khi sai PIN
       const tempRes = await pool.query(
-        `INSERT INTO students (class_id, name, alias_id, status)
-         VALUES ($1, $2, $3, 'error')
+        `INSERT INTO students (class_id, name, alias_id, qr_token, status)
+         VALUES ($1, $2, $3, $4, 'error')
          RETURNING id`,
-        [testClassId, 'Rate Limit Test Student', `TB_${uniqueClassCode.slice(-2)}_RATE`]
+        [testClassId, 'Rate Limit Test Student', `TB_${uniqueClassCode.slice(-2)}_RATE`, generateStudentQrToken()]
       );
       const rateStudentId = tempRes.rows[0].id;
       testStudentIds.push(rateStudentId);

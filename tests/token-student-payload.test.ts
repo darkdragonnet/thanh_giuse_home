@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
 import fs from 'node:fs';
 import FormData from 'form-data';
+import { generateStudentQrToken } from '@thanh-giuse/shared-infra';
 
 const { Pool } = pg;
 const API_BASE = process.env.API_BASE || 'http://localhost:3000';
@@ -16,8 +17,8 @@ describe('US3 / Phần E & D: Narrowing Token Student Payload & Manual Review Cl
   const testClassCode = `TC_TOK_${uniqueSuffix}`;
   let testStudentId: number;
   let manualReviewStudentId: number;
-  const testQrToken = `TOKEN_TEST_${uniqueSuffix}_AAA`;
-  const manualReviewQrToken = `TOKEN_TEST_${uniqueSuffix}_MR`;
+  const testQrToken = generateStudentQrToken();
+  const manualReviewQrToken = generateStudentQrToken();
   const testAliasId = `TEST_TOK_${uniqueSuffix}_001`;
 
   const FORBIDDEN_TOKEN_FIELDS = [
@@ -43,14 +44,15 @@ describe('US3 / Phần E & D: Narrowing Token Student Payload & Manual Review Cl
     // 2. Tạo học sinh test dùng-một-lần có ĐẦY ĐỦ các trường nhạy cảm để kiểm chứng lọc payload token
     const stuRes = await pool.query(
       `INSERT INTO students (
-        class_id, name, alias_id, status, person_id,
+        class_id, name, alias_id, qr_token, status, person_id,
         face_url, local_image_path, last_error_code, last_error_message, retry_count
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING id`,
       [
         testClassId,
         'TEST_ Học Sinh Token DTO',
         testAliasId,
+        testQrToken,
         'empty',
         'TEST_PERSON_HANET_12345',
         'https://static.hanet.ai/face/employee/test/secret_token_face.jpg',
@@ -65,13 +67,14 @@ describe('US3 / Phần E & D: Narrowing Token Student Payload & Manual Review Cl
     // 3. Tạo học sinh test trạng thái manual_review để kiểm thử chốt chặn claim (Phần D)
     const mrRes = await pool.query(
       `INSERT INTO students (
-        class_id, name, alias_id, status, person_id,
+        class_id, name, alias_id, qr_token, status, person_id,
         face_url, local_image_path, last_error_code, last_error_message, retry_count
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING id`,
       [
         testClassId,
         'TEST_ Học Sinh Chờ Duyệt',
+        `TEST_MR_${uniqueSuffix}`,
         manualReviewQrToken,
         'manual_review',
         'TEST_PERSON_MR_999',
@@ -95,7 +98,7 @@ describe('US3 / Phần E & D: Narrowing Token Student Payload & Manual Review Cl
   });
 
   it('1. GET /api/students/token/:qrToken: TUYỆT ĐỐI KHÔNG chứa 5 trường nội bộ (local_image_path, person_id, normalized_name, cloud_alias_synced, retry_count)', async () => {
-    const res = await fetch(`${API_BASE}/api/students/token/${testAliasId}`);
+    const res = await fetch(`${API_BASE}/api/students/token/${testQrToken}`);
     expect(res.status).toBe(200);
 
     const body = await res.json();

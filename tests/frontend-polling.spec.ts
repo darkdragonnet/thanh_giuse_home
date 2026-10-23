@@ -4,6 +4,7 @@ import { Queue } from 'bullmq';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { generateStudentQrToken } from '@thanh-giuse/shared-infra';
 
 const { Pool } = pg;
 const API_BASE = process.env.API_BASE || 'http://localhost:3000';
@@ -64,53 +65,53 @@ describe('US3 (T023/T024/T025): Endpoint Trạng Thái, Công Thức Hàng Đợ
     // 2. Tạo học sinh pending 1 (cũ hơn)
     const p1Res = await pool.query(
       `INSERT INTO students (
-        class_id, name, alias_id, status, person_id,
+        class_id, name, alias_id, qr_token, status, person_id,
         face_url, local_image_path, updated_at
-      ) VALUES ($1, $2, $3, 'pending', 'P_POL_1', 'https://static.hanet.ai/face/1.jpg', '/app/uploads/p1.jpg', NOW() - INTERVAL '10 seconds')
+      ) VALUES ($1, $2, $3, $4, 'pending', 'P_POL_1', 'https://static.hanet.ai/face/1.jpg', '/app/uploads/p1.jpg', NOW() - INTERVAL '10 seconds')
       RETURNING id`,
-      [testClassId, 'TEST_ Học Sinh Chờ 1', aliasPending1]
+      [testClassId, 'TEST_ Học Sinh Chờ 1', aliasPending1, generateStudentQrToken()]
     );
     studentPending1Id = p1Res.rows[0].id;
 
     // 3. Tạo học sinh pending 2 (mới hơn)
     const p2Res = await pool.query(
       `INSERT INTO students (
-        class_id, name, alias_id, status, person_id,
+        class_id, name, alias_id, qr_token, status, person_id,
         face_url, local_image_path, updated_at
-      ) VALUES ($1, $2, $3, 'pending', 'P_POL_2', 'https://static.hanet.ai/face/2.jpg', '/app/uploads/p2.jpg', NOW())
+      ) VALUES ($1, $2, $3, $4, 'pending', 'P_POL_2', 'https://static.hanet.ai/face/2.jpg', '/app/uploads/p2.jpg', NOW())
       RETURNING id`,
-      [testClassId, 'TEST_ Học Sinh Chờ 2', aliasPending2]
+      [testClassId, 'TEST_ Học Sinh Chờ 2', aliasPending2, generateStudentQrToken()]
     );
     studentPending2Id = p2Res.rows[0].id;
 
     // 4. Tạo học sinh success
     const sRes = await pool.query(
       `INSERT INTO students (
-        class_id, name, alias_id, status, person_id,
+        class_id, name, alias_id, qr_token, status, person_id,
         face_url, local_image_path
-      ) VALUES ($1, $2, $3, 'success', 'P_POL_3', 'https://static.hanet.ai/face/3.jpg', '/app/uploads/s.jpg')
+      ) VALUES ($1, $2, $3, $4, 'success', 'P_POL_3', 'https://static.hanet.ai/face/3.jpg', '/app/uploads/s.jpg')
       RETURNING id`,
-      [testClassId, 'TEST_ Học Sinh Xong', aliasSuccess]
+      [testClassId, 'TEST_ Học Sinh Xong', aliasSuccess, generateStudentQrToken()]
     );
     studentSuccessId = sRes.rows[0].id;
 
     // 5. Tạo học sinh empty
     const eRes = await pool.query(
       `INSERT INTO students (
-        class_id, name, alias_id, status
-      ) VALUES ($1, $2, $3, 'empty')
+        class_id, name, alias_id, qr_token, status
+      ) VALUES ($1, $2, $3, $4, 'empty')
       RETURNING id`,
-      [testClassId, 'TEST_ Học Sinh Chưa Nộp', aliasEmpty]
+      [testClassId, 'TEST_ Học Sinh Chưa Nộp', aliasEmpty, generateStudentQrToken()]
     );
     studentEmptyId = eRes.rows[0].id;
 
     // 6. Tạo học sinh manual_review
     const mrRes = await pool.query(
       `INSERT INTO students (
-        class_id, name, alias_id, status, last_error_message
-      ) VALUES ($1, $2, $3, 'manual_review', 'Cần quản trị viên phê duyệt hồ sơ')
+        class_id, name, alias_id, qr_token, status, last_error_message
+      ) VALUES ($1, $2, $3, $4, 'manual_review', 'Cần quản trị viên phê duyệt hồ sơ')
       RETURNING id`,
-      [testClassId, 'TEST_ Học Sinh Cần Duyệt', aliasMR]
+      [testClassId, 'TEST_ Học Sinh Cần Duyệt', aliasMR, generateStudentQrToken()]
     );
     studentManualReviewId = mrRes.rows[0].id;
   });

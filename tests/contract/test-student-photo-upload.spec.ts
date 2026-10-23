@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import pg from 'pg';
+import { generateStudentQrToken } from '@thanh-giuse/shared-infra';
 
 const { Pool } = pg;
 const API_BASE = process.env.API_BASE || 'http://localhost:3000';
@@ -12,18 +13,35 @@ const DB_URL =
 describe('T011: Contract Test for POST /api/students/:id/photo (contracts/student-api.yaml)', () => {
   let pool: pg.Pool;
   let createdStudentIds: number[] = [];
+  let testClassId: number;
+  let testClassCode: string;
 
   beforeAll(async () => {
     pool = new Pool({ connectionString: DB_URL });
+
+    const uniqueSuffix = Date.now().toString().slice(-2);
+    testClassCode = `UP${uniqueSuffix}`;
+
+    const clsRes = await pool.query(
+      `INSERT INTO classes (code, name, token, is_locked)
+       VALUES ($1, $2, $3, false)
+       RETURNING id`,
+      [testClassCode, `Lớp Test Upload ${testClassCode}`, `PIN_UP_${uniqueSuffix}`]
+    );
+    testClassId = clsRes.rows[0].id;
   });
 
   afterAll(async () => {
-    // Dọn dẹp tuyệt đối mọi học sinh test dùng một lần (KHÔNG đụng vào 196 học sinh thật)
+    // Dọn dẹp tuyệt đối mọi học sinh test dùng một lần (KHÔNG đụng vào dữ liệu thật)
     await pool.query("DELETE FROM logs WHERE alias_id LIKE 'TEST_T011_%'");
     if (createdStudentIds.length > 0) {
       await pool.query('DELETE FROM students WHERE id = ANY($1::int[])', [createdStudentIds]);
     }
     await pool.query("DELETE FROM students WHERE alias_id LIKE 'TEST_T011_%'");
+    if (testClassId) {
+      await pool.query('DELETE FROM students WHERE class_id = $1', [testClassId]);
+      await pool.query('DELETE FROM classes WHERE id = $1', [testClassId]);
+    }
     await pool.end();
   });
 
@@ -32,10 +50,11 @@ describe('T011: Contract Test for POST /api/students/:id/photo (contracts/studen
     const uniqueSuffix = `${Date.now()}_${Math.floor(Math.random() * 10000)}`;
     const aliasId = `TEST_T011_${uniqueSuffix}`;
     const name = `Test Student ${uniqueSuffix}`;
+    const qrToken = generateStudentQrToken();
 
     const res = await pool.query(
-      "INSERT INTO students (class_id, name, alias_id, status) VALUES (2, $1, $2, 'empty') RETURNING id, alias_id",
-      [name, aliasId]
+      "INSERT INTO students (class_id, name, alias_id, qr_token, status) VALUES ($1, $2, $3, $4, 'empty') RETURNING id, alias_id",
+      [testClassId, name, aliasId, qrToken]
     );
 
     const student = res.rows[0];

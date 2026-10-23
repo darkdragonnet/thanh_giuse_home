@@ -11,6 +11,7 @@ import {
   SettingsRepository,
   createDbPool,
   closeDbPool,
+  generateStudentQrToken,
 } from '@thanh-giuse/shared-infra';
 import { HanetClient } from '@thanh-giuse/hanet-client';
 import { processRegistrationJob } from '../../apps/worker/src/processor.js';
@@ -26,13 +27,18 @@ const REDIS_URL =
   'redis://:super_secure_redis_password_change_me@localhost:6379/0';
 const ADMIN_SECRET_TOKEN = process.env.ADMIN_SECRET_TOKEN || 'admin_secret_super_secure_token';
 
-function generateTestAlias(): string {
+let testClassAId: number;
+let testClassACode: string;
+let testClassBId: number;
+let testClassBCode: string;
+
+function generateTestAlias(classCode: string = testClassACode): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let suffix = '';
   for (let i = 0; i < 4; i++) {
     suffix += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  return `TS1A_${suffix}`;
+  return `${classCode}_${suffix}`;
 }
 
 describe('T028: Contract Test for Admin Manual Review & Unlock Guard (US5-P0)', () => {
@@ -55,6 +61,26 @@ describe('T028: Contract Test for Admin Manual Review & Unlock Guard (US5-P0)', 
     studentRepo = new StudentRepository(pool);
     logRepo = new LogRepository(pool);
     settingsRepo = new SettingsRepository(pool);
+
+    const uniqueSuffix = Date.now().toString().slice(-2);
+    testClassACode = `MA${uniqueSuffix}`;
+    testClassBCode = `MB${uniqueSuffix}`;
+
+    const clsARes = await pool.query(
+      `INSERT INTO classes (code, name, token, is_locked)
+       VALUES ($1, $2, $3, false)
+       RETURNING id`,
+      [testClassACode, `Lớp Test MR A ${testClassACode}`, `PIN_MRA_${uniqueSuffix}`]
+    );
+    testClassAId = clsARes.rows[0].id;
+
+    const clsBRes = await pool.query(
+      `INSERT INTO classes (code, name, token, is_locked)
+       VALUES ($1, $2, $3, false)
+       RETURNING id`,
+      [testClassBCode, `Lớp Test MR B ${testClassBCode}`, `PIN_MRB_${uniqueSuffix}`]
+    );
+    testClassBId = clsBRes.rows[0].id;
 
     hanetClient = new HanetClient({
       baseUrl: MOCK_API_BASE,
@@ -84,11 +110,14 @@ describe('T028: Contract Test for Admin Manual Review & Unlock Guard (US5-P0)', 
       // ignore
     }
 
-    await pool.query("DELETE FROM logs WHERE alias_id LIKE 'TEST_T028_%' OR alias_id LIKE 'TS1A_%' OR action IN ('UNLOCK_STUDENT', 'UNLOCK', 'WEBHOOK_DEFERRED')");
+    await pool.query("DELETE FROM logs WHERE alias_id LIKE 'MA%' OR alias_id LIKE 'MB%' OR action IN ('UNLOCK_STUDENT', 'UNLOCK', 'WEBHOOK_DEFERRED')");
     if (createdStudentIds.length > 0) {
       await pool.query('DELETE FROM students WHERE id = ANY($1::int[])', [createdStudentIds]);
     }
-    await pool.query("DELETE FROM students WHERE alias_id LIKE 'TEST_T028_%' OR alias_id LIKE 'TS1A_%'");
+    if (testClassAId && testClassBId) {
+      await pool.query('DELETE FROM students WHERE class_id = ANY($1::int[])', [[testClassAId, testClassBId]]);
+      await pool.query('DELETE FROM classes WHERE id = ANY($1::int[])', [[testClassAId, testClassBId]]);
+    }
 
     if (fs.existsSync(testImagePath)) {
       try {
@@ -110,12 +139,13 @@ describe('T028: Contract Test for Admin Manual Review & Unlock Guard (US5-P0)', 
   // (a) Mock -9006 -> học sinh vào manual_review
   it('(a) Mock -9006 (ảnh không đạt chuẩn): học sinh được cách ly sang manual_review', async () => {
     const suffix = `${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    const aliasId = generateTestAlias();
+    const aliasId = generateTestAlias(testClassACode);
+    const qrToken = generateStudentQrToken();
     const studentRes = await pool.query(
-      `INSERT INTO students (class_id, name, alias_id, status, local_image_path)
-       VALUES (2, $1, $2, 'pending', $3)
+      `INSERT INTO students (class_id, name, alias_id, qr_token, status, local_image_path)
+       VALUES ($1, $2, $3, $4, 'pending', $5)
        RETURNING id, alias_id, name`,
-      [`Test 9006 Student ${suffix}`, aliasId, testImagePath]
+      [testClassAId, `Test 9006 Student ${suffix}`, aliasId, qrToken, testImagePath]
     );
     const testStudent = studentRes.rows[0];
     createdStudentIds.push(testStudent.id);
@@ -132,7 +162,7 @@ describe('T028: Contract Test for Admin Manual Review & Unlock Guard (US5-P0)', 
         studentId: testStudent.id,
         aliasId,
         studentName: testStudent.name,
-        classCode: '10A2',
+        classCode: testClassACode,
         tempFilename: path.basename(testImagePath),
         uploadedAt: Date.now(),
         actionType: 'REGISTER' as const,
@@ -155,12 +185,13 @@ describe('T028: Contract Test for Admin Manual Review & Unlock Guard (US5-P0)', 
   // (b) Học sinh lỗi token -103 sau khôi phục KHÔNG bị rơi oan vào manual_review
   it('(b) Học sinh lỗi token -103 sau khôi phục: KHÔNG bị rơi oan vào manual_review', async () => {
     const suffix = `${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    const aliasId = generateTestAlias();
+    const aliasId = generateTestAlias(testClassACode);
+    const qrToken = generateStudentQrToken();
     const studentRes = await pool.query(
-      `INSERT INTO students (class_id, name, alias_id, status, local_image_path)
-       VALUES (2, $1, $2, 'pending', $3)
+      `INSERT INTO students (class_id, name, alias_id, qr_token, status, local_image_path)
+       VALUES ($1, $2, $3, $4, 'pending', $5)
        RETURNING id, alias_id, name`,
-      [`Test 103 Student ${suffix}`, aliasId, testImagePath]
+      [testClassAId, `Test 103 Student ${suffix}`, aliasId, qrToken, testImagePath]
     );
     const testStudent = studentRes.rows[0];
     createdStudentIds.push(testStudent.id);
@@ -178,7 +209,7 @@ describe('T028: Contract Test for Admin Manual Review & Unlock Guard (US5-P0)', 
         studentId: testStudent.id,
         aliasId,
         studentName: testStudent.name,
-        classCode: '10A2',
+        classCode: testClassACode,
         tempFilename: path.basename(testImagePath),
         uploadedAt: Date.now(),
         actionType: 'REGISTER' as const,
@@ -233,12 +264,13 @@ describe('T028: Contract Test for Admin Manual Review & Unlock Guard (US5-P0)', 
   // (c) POST /api/admin/students/:id/unlock trên học sinh KHÔNG ở trạng thái manual_review -> bị từ chối (4xx), không đổi trạng thái
   it('(c) POST /api/admin/students/:id/unlock trên học sinh KHÔNG ở manual_review: trả 4xx, không đổi trạng thái', async () => {
     const suffix = `${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    const aliasId = generateTestAlias();
+    const aliasId = generateTestAlias(testClassACode);
+    const qrToken = generateStudentQrToken();
     const studentRes = await pool.query(
-      `INSERT INTO students (class_id, name, alias_id, status, local_image_path)
-       VALUES (2, $1, $2, 'empty', $3)
+      `INSERT INTO students (class_id, name, alias_id, qr_token, status, local_image_path)
+       VALUES ($1, $2, $3, $4, 'empty', $5)
        RETURNING id, alias_id, name, status`,
-      [`Test Unlock Guard ${suffix}`, aliasId, testImagePath]
+      [testClassAId, `Test Unlock Guard ${suffix}`, aliasId, qrToken, testImagePath]
     );
     const testStudent = studentRes.rows[0];
     createdStudentIds.push(testStudent.id);
@@ -277,36 +309,39 @@ describe('T028: Contract Test for Admin Manual Review & Unlock Guard (US5-P0)', 
 
     // 2. Chuẩn bị dữ liệu kiểm thử
     const suffix = `${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    const alias1 = generateTestAlias();
-    const alias2 = generateTestAlias();
-    const alias3 = generateTestAlias();
+    const alias1 = generateTestAlias(testClassACode);
+    const alias2 = generateTestAlias(testClassACode);
+    const alias3 = generateTestAlias(testClassBCode);
+    const qr1 = generateStudentQrToken();
+    const qr2 = generateStudentQrToken();
+    const qr3 = generateStudentQrToken();
 
-    // Học sinh 1: lớp 2 ('10A2'), manual_review
+    // Học sinh 1: lớp A, manual_review
     const s1Res = await pool.query(
-      `INSERT INTO students (class_id, name, alias_id, status, last_error_code, last_error_message, retry_count)
-       VALUES (2, $1, $2, 'manual_review', '-9006', 'Khuôn mặt mờ hoặc không đạt chuẩn', 1)
+      `INSERT INTO students (class_id, name, alias_id, qr_token, status, last_error_code, last_error_message, retry_count)
+       VALUES ($1, $2, $3, $4, 'manual_review', '-9006', 'Khuôn mặt mờ hoặc không đạt chuẩn', 1)
        RETURNING id, alias_id, name, status`,
-      [`Test MR Student 1 ${suffix}`, alias1]
+      [testClassAId, `Test MR Student 1 ${suffix}`, alias1, qr1]
     );
     const s1 = s1Res.rows[0];
     createdStudentIds.push(s1.id);
 
-    // Học sinh 2: lớp 2, empty (không được xuất hiện trong manual-review)
+    // Học sinh 2: lớp A, empty (không được xuất hiện trong manual-review)
     const s2Res = await pool.query(
-      `INSERT INTO students (class_id, name, alias_id, status)
-       VALUES (2, $1, $2, 'empty')
+      `INSERT INTO students (class_id, name, alias_id, qr_token, status)
+       VALUES ($1, $2, $3, $4, 'empty')
        RETURNING id, alias_id, name, status`,
-      [`Test Non-MR Student 2 ${suffix}`, alias2]
+      [testClassAId, `Test Non-MR Student 2 ${suffix}`, alias2, qr2]
     );
     const s2 = s2Res.rows[0];
     createdStudentIds.push(s2.id);
 
-    // Học sinh 3: lớp 1 ('10A1'), manual_review
+    // Học sinh 3: lớp B, manual_review
     const s3Res = await pool.query(
-      `INSERT INTO students (class_id, name, alias_id, status, last_error_code, last_error_message, retry_count)
-       VALUES (1, $1, $2, 'manual_review', '-5011', 'Không tìm thấy personID', 3)
+      `INSERT INTO students (class_id, name, alias_id, qr_token, status, last_error_code, last_error_message, retry_count)
+       VALUES ($1, $2, $3, $4, 'manual_review', '-5011', 'Không tìm thấy personID', 3)
        RETURNING id, alias_id, name, status`,
-      [`Test MR Student 3 ${suffix}`, alias3]
+      [testClassBId, `Test MR Student 3 ${suffix}`, alias3, qr3]
     );
     const s3 = s3Res.rows[0];
     createdStudentIds.push(s3.id);
@@ -330,7 +365,7 @@ describe('T028: Contract Test for Admin Manual Review & Unlock Guard (US5-P0)', 
     expect(foundS1.alias_id).toBe(s1.alias_id);
     expect(foundS1.name).toBe(s1.name);
     expect(foundS1.status).toBe('manual_review');
-    expect(foundS1.class_code).toBe('10A2');
+    expect(foundS1.class_code).toBe(testClassACode);
     expect(foundS1.last_error_code).toBe('-9006');
     expect(foundS1.last_error_message).toBe('Khuôn mặt mờ hoặc không đạt chuẩn');
     expect(typeof foundS1.retry_count).toBe('number');
@@ -338,10 +373,10 @@ describe('T028: Contract Test for Admin Manual Review & Unlock Guard (US5-P0)', 
 
     const foundS3 = list.find((item) => item.id === s3.id);
     expect(foundS3).toBeDefined();
-    expect(foundS3.class_code).toBe('10A1');
+    expect(foundS3.class_code).toBe(testClassBCode);
 
-    // 4. Kiểm tra bộ lọc theo lớp (class_code=10A2)
-    const filteredRes = await fetch(`${API_BASE}/api/admin/students/manual-review?class_code=10A2`, {
+    // 4. Kiểm tra bộ lọc theo lớp
+    const filteredRes = await fetch(`${API_BASE}/api/admin/students/manual-review?class_code=${testClassACode}`, {
       headers: { Authorization: `Bearer ${ADMIN_SECRET_TOKEN}` },
     });
     expect(filteredRes.status).toBe(200);
@@ -357,24 +392,26 @@ describe('T028: Contract Test for Admin Manual Review & Unlock Guard (US5-P0)', 
   // (e) POST /api/admin/students/:id/unlock: mở khóa trọn contract với target_status và note
   it('(e) POST /api/admin/students/:id/unlock: mở khóa trọn contract với target_status và note, ghi audit log, trả đúng schema', async () => {
     const suffix = `${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    const alias1 = generateTestAlias();
-    const alias2 = generateTestAlias();
+    const alias1 = generateTestAlias(testClassACode);
+    const alias2 = generateTestAlias(testClassACode);
+    const qr1 = generateStudentQrToken();
+    const qr2 = generateStudentQrToken();
 
     // 1. Tạo 2 học sinh manual_review
     const s1Res = await pool.query(
-      `INSERT INTO students (class_id, name, alias_id, status, last_error_code, last_error_message, retry_count, local_image_path)
-       VALUES (2, $1, $2, 'manual_review', '-9006', 'Ảnh xấu', 2, $3)
+      `INSERT INTO students (class_id, name, alias_id, qr_token, status, last_error_code, last_error_message, retry_count, local_image_path)
+       VALUES ($1, $2, $3, $4, 'manual_review', '-9006', 'Ảnh xấu', 2, $5)
        RETURNING id, alias_id, name, status`,
-      [`Test Unlock Full ${suffix}`, alias1, testImagePath]
+      [testClassAId, `Test Unlock Full ${suffix}`, alias1, qr1, testImagePath]
     );
     const s1 = s1Res.rows[0];
     createdStudentIds.push(s1.id);
 
     const s2Res = await pool.query(
-      `INSERT INTO students (class_id, name, alias_id, status, last_error_code, last_error_message, retry_count, local_image_path)
-       VALUES (2, $1, $2, 'manual_review', '-9006', 'Ảnh xấu', 2, $3)
+      `INSERT INTO students (class_id, name, alias_id, qr_token, status, last_error_code, last_error_message, retry_count, local_image_path)
+       VALUES ($1, $2, $3, $4, 'manual_review', '-9006', 'Ảnh xấu', 2, $5)
        RETURNING id, alias_id, name, status`,
-      [`Test Unlock Error ${suffix}`, alias2, testImagePath]
+      [testClassAId, `Test Unlock Error ${suffix}`, alias2, qr2, testImagePath]
     );
     const s2 = s2Res.rows[0];
     createdStudentIds.push(s2.id);
@@ -460,12 +497,13 @@ describe('T028: Contract Test for Admin Manual Review & Unlock Guard (US5-P0)', 
   // (f) Webhook khi Kill Switch ngắt: trả 200 SUCCESS nhưng hoãn trạng thái học sinh và ghi log WEBHOOK_DEFERRED
   it('(f) Webhook khi Kill Switch ngắt: trả 200 SUCCESS nhưng hoãn trạng thái (không đổi) và ghi log WEBHOOK_DEFERRED; tắt Kill Switch -> áp dụng bình thường', async () => {
     const suffix = `${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    const aliasId = generateTestAlias();
+    const aliasId = generateTestAlias(testClassACode);
+    const qrToken = generateStudentQrToken();
     const studentRes = await pool.query(
-      `INSERT INTO students (class_id, name, alias_id, status)
-       VALUES (2, $1, $2, 'empty')
+      `INSERT INTO students (class_id, name, alias_id, qr_token, status)
+       VALUES ($1, $2, $3, $4, 'empty')
        RETURNING id, alias_id, name, status`,
-      [`Test Webhook Student ${suffix}`, aliasId]
+      [testClassAId, `Test Webhook Student ${suffix}`, aliasId, qrToken]
     );
     const testStudent = studentRes.rows[0];
     createdStudentIds.push(testStudent.id);
