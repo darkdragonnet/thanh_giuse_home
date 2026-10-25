@@ -28,6 +28,7 @@ import {
   type LogRepository,
   type AdminRequestRepository,
   type SettingsRepository,
+  WebhookEventRepository,
 } from '@thanh-giuse/shared-infra';
 
 
@@ -37,6 +38,7 @@ declare module 'fastify' {
     studentRepo: StudentRepository;
     logRepo: LogRepository;
     adminRequestRepo: AdminRequestRepository;
+    webhookEventRepo: WebhookEventRepository;
     settingsRepo: SettingsRepository;
     registrationQueue: Queue;
     redis: Redis;
@@ -86,6 +88,7 @@ function findStudentImageFile(localPath: string | null): string | null {
 
 export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   const { classRepo, studentRepo, logRepo, adminRequestRepo, settingsRepo, registrationQueue, redis } = fastify;
+  const webhookEventRepo = fastify.webhookEventRepo || new WebhookEventRepository(fastify.pg);
 
   // =========================================================================
   // 1. POST /api/admin/auth/verify (Endpoint công khai duy nhất cho Login)
@@ -917,6 +920,45 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       return reply.send({ success: true, data: result });
+    });
+
+    // 11.1 GET /api/admin/webhook-events
+    protectedRoutes.get('/webhook-events', async (req, reply) => {
+      const query = req.query as {
+        page?: string;
+        limit?: string;
+        data_type?: string;
+        action_type?: string;
+        disposition?: string;
+        q?: string;
+      };
+
+      const result = await webhookEventRepo.getPaginatedEvents({
+        page: query.page ? parseInt(query.page, 10) : 1,
+        limit: query.limit ? parseInt(query.limit, 10) : 20,
+        data_type: query.data_type,
+        action_type: query.action_type,
+        disposition: query.disposition,
+        q: query.q,
+      });
+
+      return reply.send({ success: true, data: result });
+    });
+
+    // 11.2 GET /api/admin/webhook-events/:id
+    protectedRoutes.get('/webhook-events/:id', async (req, reply) => {
+      const params = req.params as { id: string };
+      const id = parseInt(params.id, 10);
+      if (isNaN(id)) {
+        return reply.status(404).send({ success: false, message: 'Sự kiện webhook không tồn tại' });
+      }
+
+      const event = await webhookEventRepo.getEventById(id);
+      if (!event) {
+        return reply.status(404).send({ success: false, message: 'Sự kiện webhook không tồn tại' });
+      }
+
+      return reply.send({ success: true, data: event });
     });
 
     // Helper tự động chuẩn hóa & khắc phục Place ID (Tự phục hồi nếu Admin cấu hình nhầm Device ID Camera)

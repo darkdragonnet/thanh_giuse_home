@@ -11,6 +11,7 @@ import {
   ClassRepository,
   SettingsRepository,
   LogRepository,
+  WebhookEventRepository,
   createRedisClient,
   closeRedisClient,
   validateStudentIdentifier,
@@ -64,6 +65,7 @@ export const classRepo = new ClassRepository(pool);
 export const settingsRepo = new SettingsRepository(pool);
 export const logRepo = new LogRepository(pool);
 export const adminRequestRepo = new AdminRequestRepository(pool);
+export const webhookEventRepo = new WebhookEventRepository(pool);
 export const registrationQueue = createRegistrationQueue(redisClient);
 
 // Thư mục lưu ảnh upload
@@ -122,6 +124,7 @@ server.decorate('classRepo', classRepo);
 server.decorate('studentRepo', studentRepo);
 server.decorate('logRepo', logRepo);
 server.decorate('adminRequestRepo', adminRequestRepo);
+server.decorate('webhookEventRepo', webhookEventRepo);
 server.decorate('settingsRepo', settingsRepo);
 server.decorate('registrationQueue', registrationQueue);
 server.decorate('redis', redisClient);

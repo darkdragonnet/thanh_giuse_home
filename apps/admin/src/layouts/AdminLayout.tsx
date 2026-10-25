@@ -8,7 +8,8 @@ import { LogsTab } from '../components/logs/LogsTab';
 import { CloudFaceInspectorTab } from '../components/hanet/CloudFaceInspectorTab';
 import { ManualReviewApproval } from '../pages/ManualReviewApproval';
 import { SystemSettings } from '../pages/SystemSettings';
-import { LayoutDashboard, Users, UserCheck, Inbox, ScrollText, LogOut, Cloud, ShieldAlert, Settings } from 'lucide-react';
+import { WebhookEvents } from '../pages/WebhookEvents';
+import { LayoutDashboard, Users, UserCheck, Inbox, ScrollText, LogOut, Cloud, ShieldAlert, Settings, Activity } from 'lucide-react';
 
 export const AdminLayout: React.FC = () => {
   const { logout } = useAuth();
@@ -22,6 +23,7 @@ export const AdminLayout: React.FC = () => {
     { id: 'cloud_faces', label: 'Face ID Cloud', icon: Cloud },
     { id: 'requests', label: 'Yêu cầu xử lý', icon: Inbox },
     { id: 'settings', label: 'Cài đặt', icon: Settings },
+    { id: 'webhook_events', label: 'Webhook Push', icon: Activity },
     { id: 'logs', label: 'Nhật ký', icon: ScrollText },
   ];
 
@@ -75,6 +77,7 @@ export const AdminLayout: React.FC = () => {
         {activeTab === 'cloud_faces' && <CloudFaceInspectorTab />}
         {activeTab === 'requests' && <RequestsTab />}
         {activeTab === 'settings' && <SystemSettings />}
+        {activeTab === 'webhook_events' && <WebhookEvents />}
         {activeTab === 'logs' && <LogsTab />}
       </main>
     </div>
