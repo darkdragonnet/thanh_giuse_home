@@ -71,11 +71,28 @@ export const registrationQueue = createRegistrationQueue(redisClient);
 // Thư mục lưu ảnh upload
 const UPLOAD_DIR = apiEnv.uploadDir;
 const TMP_FACES_DIR = path.join(UPLOAD_DIR, 'tmp-faces');
+const HELD_DIR = path.join(UPLOAD_DIR, 'held');
 if (!fs.existsSync(UPLOAD_DIR)) {
   fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 if (!fs.existsSync(TMP_FACES_DIR)) {
   fs.mkdirSync(TMP_FACES_DIR, { recursive: true });
+}
+if (!fs.existsSync(HELD_DIR)) {
+  fs.mkdirSync(HELD_DIR, { recursive: true });
+}
+
+export function sanitizeKey(raw: string | null | undefined): string {
+  if (!raw) return '';
+  return raw
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .replace(/[^a-zA-Z0-9_\-]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
 }
 
 // 2. Khởi tạo Middlewares & Guards
@@ -383,9 +400,10 @@ async function handleClassStudentPhotoUpload(
   // B. Kiểm tra mã PIN Giáo viên (Nếu có PIN hợp lệ của lớp -> cho phép cập nhật lại ảnh học sinh đã 'success')
   const teacherPin = extractTeacherPin(request);
   let isTeacherVerified = false;
-  if (teacherPin && typeof studentRepo.findById === 'function' && typeof classRepo.verifyTeacherPin === 'function') {
-    const targetStudent = await studentRepo.findById(studentId);
-    if (targetStudent) {
+  let targetStudent: any = null;
+  if (typeof studentRepo.findById === 'function') {
+    targetStudent = await studentRepo.findById(studentId);
+    if (teacherPin && targetStudent && typeof classRepo.verifyTeacherPin === 'function') {
       isTeacherVerified = await classRepo.verifyTeacherPin(targetStudent.class_id, teacherPin);
     }
   }
@@ -406,10 +424,38 @@ async function handleClassStudentPhotoUpload(
   }
 
   if (!claimed) {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    if (!fs.existsSync(HELD_DIR)) {
+      fs.mkdirSync(HELD_DIR, { recursive: true });
+    }
+    const heldFilename = `${studentId}_${Date.now()}.jpg`;
+    const heldFilePath = path.join(HELD_DIR, heldFilename);
+
+    try {
+      await fs.promises.rename(filePath, heldFilePath);
+    } catch {
+      await fs.promises.copyFile(filePath, heldFilePath);
+      if (fs.existsSync(filePath)) {
+        await fs.promises.unlink(filePath);
+      }
+    }
+
+    if (!targetStudent && typeof studentRepo.findById === 'function') {
+      targetStudent = await studentRepo.findById(studentId);
+    }
+
+    await logRepo.recordLog({
+      student_id: studentId,
+      alias_id: targetStudent?.alias_id || null,
+      class_id: targetStudent?.class_id || null,
+      action: 'PHOTO_HELD_CONFLICT',
+      result_code: 'HELD_FOR_ADMIN',
+      result_message: `Ảnh xung đột trạng thái đã được chuyển vào thư mục tạm ${heldFilePath} do học sinh đã tồn tại hoặc trạng thái conflict.`,
+      ip: request.ip,
+    });
+
     return reply.status(409).send({
       error: 'Conflict',
-      message: 'Học sinh này đã được đăng ký hoặc đang trong quá trình xử lý.',
+      message: 'Học sinh này đã được đăng ký hoặc đang trong quá trình xử lý. Ảnh vừa tải lên đã được giữ an toàn để Quản trị viên xử lý, không bị xóa.',
     });
   }
 
@@ -810,6 +856,13 @@ server.post(
       return reply.status(400).send({ message: 'Vui lòng đính kèm ảnh chân dung cần hỗ trợ.' });
     }
 
+    let buffer: Buffer;
+    try {
+      buffer = await data.toBuffer();
+    } catch {
+      return reply.status(400).send({ message: 'Không thể đọc tệp ảnh tải lên.' });
+    }
+
     const fields: Record<string, string> = {};
     for (const [key, field] of Object.entries(data.fields)) {
       if ((field as any)?.value !== undefined) {
@@ -820,14 +873,23 @@ server.post(
     const aliasId = fields.alias_id || fields.aliasId || null;
     const qrToken = fields.qr_token || fields.qrToken || null;
     const rawStudentId = fields.student_id || fields.studentId || null;
-    const rateKeyId = aliasId || qrToken || rawStudentId;
+    const rawStudentName = fields.student_name || fields.studentName || null;
 
-    if (!rateKeyId) {
-      return reply.status(400).send({ message: 'Thiếu định danh học sinh (alias_id, qr_token hoặc student_id).' });
-    }
+    // Suy ra key theo thứ tự: định danh → tên đã sanitize (chỉ giữ chữ/số/gạch, chống path traversal) → IP
+    const identifier = aliasId || qrToken || rawStudentId || null;
+    const keyFromIdentifier = identifier ? sanitizeKey(identifier) : '';
+    const keyFromName = rawStudentName ? sanitizeKey(rawStudentName) : '';
+    const keyFromIp = sanitizeKey(request.ip || '127.0.0.1') || 'unknown';
 
-    // Rate Limit: 5 lần / giờ / định danh học sinh
-    const rateLimitKey = `ratelimit:admin_req:${rateKeyId}`;
+    const rateKey = keyFromIdentifier || keyFromName || keyFromIp;
+
+    // GHI FILE ẢNH XUỐNG ĐĨA TRƯỚC mọi kiểm tra định danh và rate limit (không bao giờ xóa file vừa nhận)
+    const filename = `admin_req_${rateKey}_${Date.now()}.jpg`;
+    const filePath = path.join(UPLOAD_DIR, filename);
+    await fs.promises.writeFile(filePath, buffer);
+
+    // Rate Limit: 5 lần / giờ / key (định danh → tên đã sanitize → IP)
+    const rateLimitKey = `ratelimit:admin_req:${rateKey}`;
     const currentAttempts = await redisClient.incr(rateLimitKey);
     if (currentAttempts === 1) {
       await redisClient.expire(rateLimitKey, 3600);
@@ -839,17 +901,11 @@ server.post(
       });
     }
 
-    const filename = `admin_req_${rateKeyId}_${Date.now()}.jpg`;
-    const filePath = path.join(UPLOAD_DIR, filename);
-
-    await new Promise<void>((resolve, reject) => {
-      const writeStream = fs.createWriteStream(filePath);
-      data.file.pipe(writeStream);
-      writeStream.on('finish', () => resolve());
-      writeStream.on('error', reject);
-    });
-
-    let studentRecord = aliasId ? await studentRepo.findByAliasId(aliasId) : null;
+    // Tra cứu học sinh như cũ khi có định danh; không có định danh thì KHÔNG tự đoán theo tên
+    let studentRecord: any = null;
+    if (aliasId) {
+      studentRecord = await studentRepo.findByAliasId(aliasId);
+    }
     if (!studentRecord && qrToken && typeof studentRepo.findByQrToken === 'function') {
       studentRecord = await studentRepo.findByQrToken(qrToken);
     }
@@ -860,11 +916,17 @@ server.post(
       }
     }
 
+    const rawClassId = fields.class_id || fields.classId || null;
+    const parsedClassId = rawClassId ? parseInt(rawClassId, 10) : NaN;
+    const resolvedClassId = studentRecord
+      ? studentRecord.class_id
+      : (!isNaN(parsedClassId) ? parsedClassId : undefined);
+
     const created = await adminRequestRepo.createRequest({
       student_id: studentRecord ? studentRecord.id : null,
       alias_id: aliasId || (studentRecord ? studentRecord.alias_id : null),
-      class_id: studentRecord ? studentRecord.class_id : undefined,
-      student_name: fields.student_name || fields.studentName || (studentRecord ? studentRecord.name : undefined),
+      class_id: resolvedClassId,
+      student_name: rawStudentName || (studentRecord ? studentRecord.name : undefined) || null,
       image_path: filePath,
       note: fields.note || undefined,
       ip: request.ip,
@@ -873,7 +935,7 @@ server.post(
     await logRepo.recordLog({
       student_id: studentRecord?.id ?? null,
       alias_id: aliasId || studentRecord?.alias_id || null,
-      class_id: studentRecord?.class_id,
+      class_id: resolvedClassId,
       action: 'ADMIN_REQUEST_CREATED',
       result_code: 'SUCCESS',
       result_message: `Học sinh gửi yêu cầu hỗ trợ (ID: ${created.id}, ghi chú: ${fields.note || 'Không có'})`,
