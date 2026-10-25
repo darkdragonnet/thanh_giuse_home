@@ -239,15 +239,18 @@ export interface TeacherStudentDto extends PublicStudentDto {
   is_updating: boolean;
   last_error_code: string | null;
   last_error_message: string | null;
+  face_url: string | null;
+  local_image_path: string | null;
 }
 
 /**
  * Thu hẹp payload danh sách học sinh theo lớp nhằm triệt tiêu nguy cơ lộ dữ liệu nhạy cảm trẻ em:
- * - Public (mặc định / không PIN / PIN sai): chỉ nhận id, name, status, alias_id.
+ * - Public (mặc định / không PIN / PIN sai / PIN của lớp khác): chỉ nhận id, name, status, alias_id.
  *   TUYỆT ĐỐI KHÔNG chứa: qr_token, face_url, local_image_path, person_id, last_error_code,
  *   last_error_message, normalized_name, cloud_alias_synced, is_updating, retry_count.
- * - Teacher (PIN hợp lệ): nhận thêm is_updating, last_error_code, last_error_message phục vụ kiểm tra lỗi.
- *   TUYỆT ĐỐI VẪN KHÔNG chứa: qr_token, person_id, face_url, local_image_path, retry_count.
+ * - Teacher (PIN hợp lệ của ĐÚNG lớp đó): nhận thêm is_updating, last_error_code, last_error_message,
+ *   và 2 trường ảnh face_url, local_image_path để hiện ảnh học sinh đã đăng ký.
+ *   TUYỆT ĐỐI VẪN KHÔNG chứa: qr_token, person_id, retry_count, normalized_name, cloud_alias_synced.
  */
 function mapStudentToRosterDto(
   student: StudentRecord,
@@ -266,6 +269,8 @@ function mapStudentToRosterDto(
       is_updating: Boolean(student.is_updating),
       last_error_code: student.last_error_code ?? null,
       last_error_message: student.last_error_message ?? null,
+      face_url: student.face_url ?? null,
+      local_image_path: student.local_image_path ?? null,
     };
   }
 

@@ -129,9 +129,9 @@ describe('Contract Test: POST /api/admin-requests & Held Conflict Flow', () => {
     const note = `TEST_full_id_req_${Date.now()}`;
 
     const form = new FormData();
-    form.append('photo', new Blob([sampleJpeg], { type: 'image/jpeg' }), 'portrait.jpg');
     form.append('alias_id', student.alias_id);
     form.append('note', note);
+    form.append('photo', new Blob([sampleJpeg], { type: 'image/jpeg' }), 'portrait.jpg');
 
     const res = await fetch(`${API_BASE}/api/admin-requests`, {
       method: 'POST',
@@ -173,9 +173,9 @@ describe('Contract Test: POST /api/admin-requests & Held Conflict Flow', () => {
     const note = `TEST_note_name_only_${Date.now()}`;
 
     const form = new FormData();
-    form.append('photo', new Blob([sampleJpeg], { type: 'image/jpeg' }), 'student_photo.jpg');
     form.append('student_name', testName);
     form.append('note', note);
+    form.append('photo', new Blob([sampleJpeg], { type: 'image/jpeg' }), 'student_photo.jpg');
 
     const res = await fetch(`${API_BASE}/api/admin-requests`, {
       method: 'POST',
@@ -272,9 +272,9 @@ describe('Contract Test: POST /api/admin-requests & Held Conflict Flow', () => {
     // 5 lần đầu -> 201
     for (let i = 1; i <= 5; i++) {
       const form = new FormData();
-      form.append('photo', new Blob([sampleJpeg], { type: 'image/jpeg' }), `rl_${i}.jpg`);
       form.append('student_name', rlName);
       form.append('note', `TEST_rl_attempt_${i}`);
+      form.append('photo', new Blob([sampleJpeg], { type: 'image/jpeg' }), `rl_${i}.jpg`);
 
       const res = await fetch(`${API_BASE}/api/admin-requests`, {
         method: 'POST',
@@ -289,9 +289,9 @@ describe('Contract Test: POST /api/admin-requests & Held Conflict Flow', () => {
 
     // Lần thứ 6 -> 429 Too Many Requests
     const form6 = new FormData();
-    form6.append('photo', new Blob([sampleJpeg], { type: 'image/jpeg' }), 'rl_6.jpg');
     form6.append('student_name', rlName);
     form6.append('note', 'TEST_rl_attempt_6');
+    form6.append('photo', new Blob([sampleJpeg], { type: 'image/jpeg' }), 'rl_6.jpg');
 
     const res6 = await fetch(`${API_BASE}/api/admin-requests`, {
       method: 'POST',

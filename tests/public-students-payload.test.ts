@@ -135,11 +135,13 @@ describe('P0 Security: Narrowing Public Payload of Class Students Endpoint', () 
     expect(testStudent).toHaveProperty('last_error_message', 'Khuôn mặt nghiêng quá 30 độ so với khung hình');
     expect(testStudent).toHaveProperty('is_updating');
 
-    // Nhưng ngay cả Giáo viên cũng KHÔNG được lộ qr_token cá nhân, person_id, face_url, local_image_path
+    // Giáo viên có PIN hợp lệ được nhận thêm ảnh học sinh (face_url, local_image_path)
+    expect(testStudent).toHaveProperty('face_url', 'https://static.hanet.ai/face/employee/test/secret_child_face.jpg');
+    expect(testStudent).toHaveProperty('local_image_path', '/app/uploads/test_sensitive_child.jpg');
+
+    // Nhưng ngay cả Giáo viên cũng KHÔNG được lộ qr_token cá nhân, person_id, retry_count
     expect(testStudent).not.toHaveProperty('qr_token');
     expect(testStudent).not.toHaveProperty('person_id');
-    expect(testStudent).not.toHaveProperty('face_url');
-    expect(testStudent).not.toHaveProperty('local_image_path');
     expect(testStudent).not.toHaveProperty('cloud_alias_synced');
     expect(testStudent).not.toHaveProperty('retry_count');
     expect(testStudent).not.toHaveProperty('normalized_name');
@@ -157,10 +159,10 @@ describe('P0 Security: Narrowing Public Payload of Class Students Endpoint', () 
     expect(testStudent).toHaveProperty('last_error_code', 'FACE_ANGLE_TOO_LARGE');
     expect(testStudent).toHaveProperty('last_error_message', 'Khuôn mặt nghiêng quá 30 độ so với khung hình');
     expect(testStudent).toHaveProperty('is_updating');
+    expect(testStudent).toHaveProperty('face_url', 'https://static.hanet.ai/face/employee/test/secret_child_face.jpg');
+    expect(testStudent).toHaveProperty('local_image_path', '/app/uploads/test_sensitive_child.jpg');
     expect(testStudent).not.toHaveProperty('qr_token');
     expect(testStudent).not.toHaveProperty('person_id');
-    expect(testStudent).not.toHaveProperty('face_url');
-    expect(testStudent).not.toHaveProperty('local_image_path');
   });
 
   it('5. Gọi theo numeric classId: Hoạt động đồng nhất chuẩn bảo mật như classCode', async () => {
@@ -181,9 +183,9 @@ describe('P0 Security: Narrowing Public Payload of Class Students Endpoint', () 
     const studentsTeacher = await resTeacher.json();
     const stuTeacher = studentsTeacher.find((s: any) => s.id === testStudentId);
     expect(stuTeacher).toHaveProperty('last_error_code', 'FACE_ANGLE_TOO_LARGE');
+    expect(stuTeacher).toHaveProperty('face_url', 'https://static.hanet.ai/face/employee/test/secret_child_face.jpg');
+    expect(stuTeacher).toHaveProperty('local_image_path', '/app/uploads/test_sensitive_child.jpg');
     expect(stuTeacher).not.toHaveProperty('qr_token');
     expect(stuTeacher).not.toHaveProperty('person_id');
-    expect(stuTeacher).not.toHaveProperty('face_url');
-    expect(stuTeacher).not.toHaveProperty('local_image_path');
   });
 });
