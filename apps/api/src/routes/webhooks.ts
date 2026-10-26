@@ -260,7 +260,114 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(200).send({ returnCode: 1, message: 'SUCCESS' });
     }
 
-    // 4. Các sự kiện khác (device, place, ...)
+    // 4. Xử lý sự kiện CheckinData (data_type = 'log')
+    if (payload?.data_type === 'log') {
+      const rawPersonType = payload.personType !== undefined ? payload.personType : payload.person_type;
+      let validPersonType: number | null = null;
+
+      if (typeof rawPersonType === 'number' && Number.isInteger(rawPersonType) && [0, 1, 2, 3, 4, 5, 6, 28].includes(rawPersonType)) {
+        validPersonType = rawPersonType;
+      } else if (typeof rawPersonType === 'string' && /^-?\d+$/.test(rawPersonType.trim())) {
+        const parsed = parseInt(rawPersonType.trim(), 10);
+        if ([0, 1, 2, 3, 4, 5, 6, 28].includes(parsed)) {
+          validPersonType = parsed;
+        }
+      }
+
+      if (validPersonType === null) {
+        request.log.info({ payload }, '[Webhook] Log event missing or invalid personType - ignored');
+        await recordWebhookEventSafe(fastify, request, {
+          payload,
+          disposition: 'ignored',
+          hashValid: true,
+          killSwitchActive: false,
+        });
+        return reply.status(200).send({ returnCode: 1, message: 'SUCCESS' });
+      }
+
+      let logError: string | null = null;
+      try {
+        const hanetEventId = payload.id ? String(payload.id) : null;
+        const personId = payload.personID ? String(payload.personID) : (payload.person_id ? String(payload.person_id) : null);
+        const personName = payload.personName ? String(payload.personName) : (payload.person_name ? String(payload.person_name) : null);
+        const aliasId = payload.aliasID ? String(payload.aliasID) : (payload.alias_id ? String(payload.alias_id) : null);
+        const deviceId = payload.deviceID ? String(payload.deviceID) : (payload.device_id ? String(payload.device_id) : null);
+        const deviceName = payload.deviceName ? String(payload.deviceName) : (payload.device_name ? String(payload.device_name) : null);
+        const placeId = payload.placeID ? String(payload.placeID) : (payload.place_id ? String(payload.place_id) : null);
+        const placeName = payload.placeName ? String(payload.placeName) : (payload.place_name ? String(payload.place_name) : null);
+
+        let mask: number | null = null;
+        if (payload.mask !== undefined && payload.mask !== null && payload.mask !== '') {
+          const parsedMask = parseInt(String(payload.mask), 10);
+          if (!isNaN(parsedMask)) mask = parsedMask;
+        }
+
+        const detectedImageUrl =
+          payload.detected_image_url ||
+          payload.detectedImageUrl ||
+          payload.avatar ||
+          payload.file ||
+          payload.image ||
+          null;
+
+        let eventTime: number | null = null;
+        const rawTime = payload.time !== undefined ? payload.time : payload.event_time;
+        if (rawTime !== undefined && rawTime !== null && rawTime !== '') {
+          const parsedTime = parseInt(String(rawTime), 10);
+          if (!isNaN(parsedTime)) eventTime = parsedTime;
+        }
+
+        await fastify.pg.query(
+          `INSERT INTO object_events (
+            hanet_event_id, person_type, person_id, person_name, alias_id,
+            device_id, device_name, place_id, place_name,
+            mask, detected_image_url, event_time, received_at
+          ) VALUES (
+            $1, $2, $3, $4, $5,
+            $6, $7, $8, $9,
+            $10, $11, $12, NOW()
+          )`,
+          [
+            hanetEventId,
+            validPersonType,
+            personId,
+            personName,
+            aliasId,
+            deviceId,
+            deviceName,
+            placeId,
+            placeName,
+            mask,
+            detectedImageUrl,
+            eventTime,
+          ]
+        );
+      } catch (err: any) {
+        logError = err?.message || String(err);
+        request.log.error({ err }, '[Webhook Object Events DB Error]');
+      }
+
+      if (logError) {
+        await recordWebhookEventSafe(fastify, request, {
+          payload,
+          disposition: 'failed',
+          hashValid: true,
+          killSwitchActive: false,
+          errorMessage: logError,
+        });
+      } else {
+        await recordWebhookEventSafe(fastify, request, {
+          payload,
+          disposition: 'applied',
+          hashValid: true,
+          killSwitchActive: false,
+        });
+      }
+
+      return reply.status(200).send({ returnCode: 1, message: 'SUCCESS' });
+    }
+
+    // 5. Các sự kiện khác (device, place, ...)
     await recordWebhookEventSafe(fastify, request, {
       payload,
       disposition: 'ignored',
