@@ -775,7 +775,35 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         limit: query.limit ? parseInt(query.limit, 10) : 20,
       });
 
-      return reply.send({ success: true, data: result });
+      const transformRequestItem = (item: any) => {
+        let imageUrl: string | null = null;
+        if (item.image_path && typeof item.image_path === 'string' && item.image_path.trim()) {
+          const normalized = item.image_path.trim().replace(/\\/g, '/');
+          const base = path.posix.basename(normalized);
+          if (base && base !== '.' && base !== '..') {
+            imageUrl = `/uploads/${base}`;
+          }
+        }
+        const { image_path, ...rest } = item;
+        return {
+          ...rest,
+          image_url: imageUrl,
+        };
+      };
+
+      let transformedData: any;
+      if (Array.isArray(result)) {
+        transformedData = result.map(transformRequestItem);
+      } else if (result && Array.isArray(result.items)) {
+        transformedData = {
+          ...result,
+          items: result.items.map(transformRequestItem),
+        };
+      } else {
+        transformedData = result;
+      }
+
+      return reply.send({ success: true, data: transformedData });
     });
 
     // 9. PATCH /api/admin/requests/:id/status

@@ -7,11 +7,15 @@ interface AdminRequest {
   id: number;
   alias_id: string;
   student_name: string;
-  image_path: string;
+  image_url: string | null;
+  image_path?: string;
   note: string;
   status: 'new' | 'processing' | 'done';
   created_at: string;
 }
+
+const PLACEHOLDER_SVG =
+  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="60" viewBox="0 0 24 24" fill="none" stroke="%23ccc" stroke-width="1"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>';
 
 export const RequestsTab: React.FC = () => {
   const [requests, setRequests] = useState<AdminRequest[]>([]);
@@ -56,6 +60,24 @@ export const RequestsTab: React.FC = () => {
 
     return Object.values(groups);
   }, [requests]);
+
+  const handleImageError = (
+    e: React.SyntheticEvent<HTMLImageElement, Event>,
+    aliasId?: string | null
+  ) => {
+    const img = e.currentTarget;
+    if (img.src.startsWith('data:image/svg+xml')) {
+      return;
+    }
+    const currentStep = img.getAttribute('data-fallback-step') || '0';
+    if (currentStep === '0' && aliasId) {
+      img.setAttribute('data-fallback-step', '1');
+      img.src = `/images/${aliasId}.jpg`;
+    } else {
+      img.setAttribute('data-fallback-step', '2');
+      img.src = PLACEHOLDER_SVG;
+    }
+  };
 
   const updateStatus = async (id: number, status: string) => {
     try {
@@ -105,10 +127,11 @@ export const RequestsTab: React.FC = () => {
               {/* Ảnh học sinh đính kèm */}
               <div className="aspect-[16/9] w-full overflow-hidden rounded-lg bg-gray-100 border">
                 <img
-                  src={`/images/${latest.alias_id}.jpg`}
+                  src={latest.image_url || (latest.alias_id ? `/images/${latest.alias_id}.jpg` : PLACEHOLDER_SVG)}
+                  data-fallback-step={latest.image_url ? '0' : (latest.alias_id ? '1' : '2')}
                   alt="Ảnh yêu cầu"
                   className="h-full w-full object-cover"
-                  onError={(e) => { (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="60" viewBox="0 0 24 24" fill="none" stroke="%23ccc" stroke-width="1"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>'; }}
+                  onError={(e) => handleImageError(e, latest.alias_id)}
                 />
               </div>
 
